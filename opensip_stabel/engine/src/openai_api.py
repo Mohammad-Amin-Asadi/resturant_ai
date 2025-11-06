@@ -69,27 +69,9 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         self.key = self.cfg.get(["key", "openai_key"], "OPENAI_API_KEY")
         self.voice = self.cfg.get(["voice", "openai_voice"], "OPENAI_VOICE", "alloy")
 
-        # Assistant behavior (Persian) - Restaurant ordering
-        self.instructions = (
-            "با لحنی گرم و پر انرژی صحبت کن "
-            "فقط و فقط فارسی صحبت کن ، به هیچ زبان دیگه ای بجز فارسی صحبت نکن."
-            " تو یک دستیار هوشمند رستوران بزرگمهر هستی. همیشه حرفه‌ای و مودب و بااحترام و پر انرژی و شاد حرف میزنی . "
-            "همیشه با لحن مودب و با احترام و پر انرژی حرف بزن"
-            "وظیفه تو دریافت سفارش غذا و اعلام وضعیت سفارشات قبلی است. "
-            "سناریو: ابتدا سلام کن و بپرس کاربر میخواهد سفارش جدید ثبت کند یا پیگیری سفارش قبلی داشته باشد. "
-            "اگر پیگیری سفارش: شماره تلفن او را بگیر و با استفاده از تابع track_order وضعیت سفارش را اعلام کن. "
-            
-            "اگر ثبت سفارش جدید: "
-            "1) نام مشتری را بپرس "
-            "2) بپرس چیزی مدنظرش هست یا منو پیامک بشود؟ اگر خواست پیشنهادات ویژه رستوران را با get_menu_specials بگیر و بگو "
-            "3) سفارش غذای اصلی را بگیر، اگر عین آن غذا موجود نبود شبیه‌ترین را با search_menu_item بیاب و پیشنهاد بده "
-            "4) آدرس تحویل را بگیر  و مطمعن بشو که شماره تلفن رو گرفتی"
-            "5) همه موارد سفارش را تایید کن و با create_order ثبت کن. "
-            "همیشه طبیعی و دوستانه صحبت کن."
-            " به هیچ وجه اشاره ای به جنسیت شخص نکن  (مثل خطاب کردن و گفتن آقا یا خانم)"
-            "کاربر از تو چیزی خارج از سفارش نمیپرسه ، پس اگر موقع انتخاب غذاها چیزی شنیدی که انگار مرتبط با غذا نیست بررسی کن ببین شبیه ترین چیز به یکی از اسم های غذا چی بود بعد یکی از غذاها رو در نظر بگیر و ازش بپرس که آیا منظورش این بود یا نه . مثلا اگر کاربر کفت کووید میخواستم ، بگو کوبیده  فرمودین ؟ فقط اگر چیزی گفت که اسم غذا نبود مستقیما."
-            "با مشتری حرفه ای و با لحن احترام سخن بگو و با تو خطاب نکن ، همیشه از کلمه ی شما استفاده کن"
-        )
+        # NOTE: Instructions are now DYNAMIC and built per call based on order status
+        # See _build_customized_instructions() method which creates scenario-specific instructions
+        # Static instructions removed - each call gets customized instructions in start() method
         # Fixed: use correct parameter order (option, env, fallback)
         self.intro = self.cfg.get("welcome_message", "OPENAI_WELCOME_MESSAGE", ". سلام و درود بر شما،با رستوران بزرگمهر تماس گرفته اید . درخدمتم. ")
         self.transfer_to = self.cfg.get("transfer_to", "OPENAI_TRANSFER_TO", None)
@@ -262,6 +244,207 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             return ("alaw", 8000, 1)
         return ("pcm_s16le", 16000, 1)
 
+    # ---------------------- order checking helpers ----------------------
+    async def _check_undelivered_order(self, phone_number):
+        """
+        Check if caller has any undelivered orders.
+        Returns: (has_undelivered, order_dict) tuple
+        """
+        if not phone_number:
+            logging.warning("⚠️  No phone number provided for order check")
+            return False, None
+        
+        try:
+            # Normalize phone number
+            normalized_phone = normalize_phone_number(phone_number)
+            logging.info("🔍 Checking orders for phone: %s (normalized: %s)", phone_number, normalized_phone)
+            
+            # Track orders
+            result = await api.track_order(normalized_phone)
+            
+            if not result or not result.get("success"):
+                logging.warning("⚠️  Failed to check orders: %s", result.get("message", "Unknown error"))
+                return False, None
+            
+            orders = result.get("orders", [])
+            if not orders:
+                logging.info("📭 No orders found for phone: %s", normalized_phone)
+                return False, None
+            
+            # Filter out delivered and cancelled orders
+            undelivered = [o for o in orders if o.get("status") not in ["delivered", "cancelled"]]
+            
+            if undelivered:
+                # Return the latest undelivered order (first in list, as orders are sorted by date desc)
+                latest_order = undelivered[0]
+                logging.info("✅ Found undelivered order: ID=%s, Status=%s", 
+                           latest_order.get('id'), latest_order.get('status_display'))
+                return True, latest_order
+            else:
+                logging.info("✅ All orders are delivered or cancelled for phone: %s", normalized_phone)
+                return False, None
+                
+        except Exception as e:
+            logging.error(f"❌ Exception checking orders: {e}", exc_info=True)
+            return False, None
+
+    def _format_items_list_persian(self, items):
+        """
+        Format order items list in Persian.
+        Example: [{"menu_item_name": "کباب کوبیده", "quantity": 1}, {"menu_item_name": "دوغ سنتی", "quantity": 2}]
+        Returns: "یک کباب کوبیده و دوغ سنتی کوچک"
+        """
+        if not items or len(items) == 0:
+            return ""
+        
+        persian_numbers = {
+            1: "یک", 2: "دو", 3: "سه", 4: "چهار", 5: "پنج",
+            6: "شش", 7: "هفت", 8: "هشت", 9: "نه", 10: "ده"
+        }
+        
+        formatted_items = []
+        for item in items:
+            quantity = item.get('quantity', 1)
+            # Try different possible field names for item name
+            item_name = (item.get('menu_item_name') or 
+                        (item.get('menu_item', {}).get('name') if isinstance(item.get('menu_item'), dict) else None) or
+                        item.get('name', ''))
+            
+            if not item_name:
+                logging.warning(f"⚠️  Item name not found in order item: {item}")
+                continue
+            
+            if quantity == 1:
+                formatted_items.append(f"یک {item_name}")
+            elif quantity <= 10:
+                formatted_items.append(f"{persian_numbers.get(quantity, str(quantity))} {item_name}")
+            else:
+                formatted_items.append(f"{quantity} {item_name}")
+        
+        if len(formatted_items) == 0:
+            return ""
+        elif len(formatted_items) == 1:
+            return formatted_items[0]
+        elif len(formatted_items) == 2:
+            return f"{formatted_items[0]} و {formatted_items[1]}"
+        else:
+            # For 3+ items: "یک X، دو Y و سه Z"
+            all_except_last = "، ".join(formatted_items[:-1])
+            return f"{all_except_last} و {formatted_items[-1]}"
+
+    def _build_welcome_message(self, has_undelivered_order, order=None):
+        """
+        Build welcome message based on order status.
+        Always includes hello and restaurant name.
+        When order exists, includes full order details: customer_name, address, items, status.
+        """
+        base_greeting = "سلام و درود بر شما، با رستوران بزرگمهر تماس گرفته‌اید"
+        
+        if has_undelivered_order and order:
+            # Has undelivered order - report full order details
+            order_id = order.get('id', '')
+            status_display = order.get('status_display', '')
+            customer_name = order.get('customer_name', '')
+            address = order.get('address', '')
+            items = order.get('items', [])
+            order_status = order.get('status', '')
+            
+            logging.info(f"📋 Building welcome message for order ID={order_id}, items_count={len(items)}, address={bool(address)}")
+            
+            # Format items list in Persian using helper function
+            items_text = self._format_items_list_persian(items)
+            logging.info(f"📦 Formatted items text: {items_text}")
+            
+            # Build status text based on order status
+            if order_status == 'preparing':
+                status_text = f"{status_display} توسط رستوران است"
+            else:
+                status_text = f"{status_display} است"
+            
+            # Build the detailed message matching the exact format
+            # Format: "سفارش شما به شماره ی X که [items]، به مقصد [address] ثبت شده بود [status] است"
+            if items_text:
+                if address:
+                    order_details = f"سفارش شما به شماره ی {order_id} که {items_text}، به مقصد {address} ثبت شده بود {status_text}"
+                else:
+                    order_details = f"سفارش شما به شماره ی {order_id} که {items_text} ثبت شده بود {status_text}"
+            else:
+                # Fallback if items are not available
+                if address:
+                    order_details = f"سفارش شما به شماره ی {order_id} به مقصد {address} ثبت شده بود {status_text}"
+                else:
+                    order_details = f"سفارش شما به شماره ی {order_id} ثبت شده بود {status_text}"
+            
+            # Join greeting and order details, then add closing
+            full_message = f"{base_greeting}، {order_details}."
+            full_message += " از صبر و شکیبایی شما متشکریم. اگر امر دیگری هست در خدمت شما هستم."
+            
+            return full_message
+        else:
+            # No undelivered orders - ask if they want to order
+            return f"{base_greeting}. آیا می‌خواهید سفارش جدیدی ثبت کنید؟"
+
+    def _build_customized_instructions(self, has_undelivered_order, order=None):
+        """
+        Build customized instructions based on call context.
+        Different scenarios for different call situations.
+        """
+        base_instructions = (
+            "با لحنی گرم و پر انرژی صحبت کن "
+            "فقط و فقط فارسی صحبت کن ، به هیچ زبان دیگه ای بجز فارسی صحبت نکن."
+            " تو یک دستیار هوشمند رستوران بزرگمهر هستی. همیشه حرفه‌ای و مودب و بااحترام و پر انرژی و شاد حرف میزنی . "
+            "همیشه با لحن مودب و با احترام و پر انرژی حرف بزن"
+            "مهم: شماره تلفن مشتری به صورت خودکار از تماس گرفته می‌شود و نیازی به پرسیدن آن نیست. "
+            "همیشه طبیعی و دوستانه صحبت کن."
+            " به هیچ وجه اشاره ای به جنسیت شخص نکن  (مثل خطاب کردن و گفتن آقا یا خانم)"
+            "کاربر از تو چیزی خارج از سفارش نمیپرسه ، پس اگر موقع انتخاب غذاها چیزی شنیدی که انگار مرتبط با غذا نیست بررسی کن ببین شبیه ترین چیز به یکی از اسم های غذا چی بود بعد یکی از غذاها رو در نظر بگیر و ازش بپرس که آیا منظورش این بود یا نه . مثلا اگر کاربر کفت کووید میخواستم ، بگو کوبیده  فرمودین ؟ فقط اگر چیزی گفت که اسم غذا نبود مستقیما."
+            "با مشتری حرفه ای و با لحن احترام سخن بگو و با تو خطاب نکن ، همیشه از کلمه ی شما استفاده کن"
+        )
+        
+        if has_undelivered_order and order:
+            # Scenario 1: Caller has undelivered order
+            order_status = order.get('status', '')
+            order_id = order.get('id', '')
+            status_display = order.get('status_display', '')
+            
+            scenario_instructions = (
+                f"وضعیت سفارش: مشتری دارای سفارش شماره {order_id} با وضعیت {status_display} است که هنوز تحویل داده نشده. "
+                "وظیفه تو: "
+                "1) ابتدا وضعیت سفارش را که در پیام خوش‌آمدگویی گفته شده، تایید کن و بپرس آیا سوالی درباره سفارش دارند. "
+                "2) اگر می‌خواهند سفارش جدید ثبت کنند، به سناریوی ثبت سفارش جدید برو. "
+                "3) اگر می‌خواهند وضعیت سفارش را دوباره بررسی کنند، می‌توانی از تابع track_order استفاده کنی (شماره تلفن به صورت خودکار استفاده می‌شود). "
+                "4) اگر سوالی درباره زمان تحویل یا جزئیات سفارش دارند، با لحن دوستانه پاسخ بده. "
+            )
+            
+            if order_status in ['pending', 'confirmed']:
+                scenario_instructions += (
+                    "نکته: سفارش در حال تایید یا تایید شده است. به مشتری اطمینان بده که سفارش در حال آماده شدن است. "
+                )
+            elif order_status == 'preparing':
+                scenario_instructions += (
+                    "نکته: سفارش در حال آماده سازی است. به مشتری بگو که به زودی آماده می‌شود. "
+                )
+            elif order_status == 'on_delivery':
+                scenario_instructions += (
+                    "نکته: سفارش به پیک تحویل داده شده و در راه است. به مشتری بگو که به زودی به دستش می‌رسد. "
+                )
+            
+        else:
+            # Scenario 2: Caller has no undelivered orders (new customer or all orders delivered)
+            scenario_instructions = (
+                "پر انرژی و گرم حرف بزن"
+                "وضعیت سفارش: مشتری سفارش تحویل نشده‌ای ندارد. "
+                "وظیفه تو: دریافت سفارش جدید. "
+                "سناریوی ثبت سفارش جدید: "
+                "1) نام مشتری را بپرس "
+                "2) اگر کاربر درخواست کرد پیشنهادات ویژه رستوران را با get_menu_specials بگیر و بگو "
+                "3) سفارش غذای اصلی را بگیر، اگر عین آن غذا موجود نبود شبیه‌ترین را با search_menu_item بیاب و پیشنهاد بده "
+                "4) آدرس تحویل را بگیر (شماره تلفن به صورت خودکار از تماس گرفته می‌شود و نیازی به پرسیدن آن نیست)"
+                "5) همه موارد سفارش را تایید کن و با create_order ثبت کن. "
+            )
+        
+        return base_instructions + " " + scenario_instructions
+
     # ---------------------- session start ----------------------
     async def start(self):
         """Starts OpenAI connection, connects Soniox, runs main loop."""
@@ -284,7 +467,27 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             logging.error("FLOW start: OpenAI hello error: %s", e)
             return
 
-        # Build session
+        # Check caller's phone number and orders BEFORE building session (for customized scenario)
+        caller_phone = self.call.from_number
+        logging.info("📞 Caller phone number: %s", caller_phone or "Not available")
+        
+        # Check for undelivered orders
+        has_undelivered, order = await self._check_undelivered_order(caller_phone)
+        logging.info("📦 Order status: has_undelivered=%s, order_id=%s", 
+                     has_undelivered, order.get('id') if order else None)
+        
+        # Build DYNAMIC customized instructions based on call context
+        # This creates a unique scenario for EACH call based on order status
+        customized_instructions = self._build_customized_instructions(has_undelivered, order)
+        logging.info("🎯 DYNAMIC SCENARIO: Customized instructions built for this specific call")
+        if has_undelivered and order:
+            logging.info("   → Scenario: Customer with undelivered order (ID: %s, Status: %s)", 
+                        order.get('id'), order.get('status_display'))
+        else:
+            logging.info("   → Scenario: New customer or all orders delivered - focus on new order")
+        logging.debug("   Instructions preview: %s", customized_instructions[:200] + "...")
+
+        # Build session with customized instructions
         self.session = {
             "modalities": ["text", "audio"],  # REQUIRED: Enable audio output!
             "turn_detection": {
@@ -310,13 +513,13 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 {
                     "type": "function",
                     "name": "track_order",
-                    "description": "پیگیری سفارش قبلی بر اساس شماره تلفن مشتری. وضعیت سفارش را برمی‌گرداند.",
+                    "description": "پیگیری سفارش قبلی بر اساس شماره تلفن مشتری. وضعیت سفارش را برمی‌گرداند. اگر شماره تلفن ارائه نشود، شماره تماس‌گیرنده به صورت خودکار استفاده می‌شود.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "phone_number": {"type": "string", "description": "شماره تلفن مشتری برای پیگیری سفارش"},
+                            "phone_number": {"type": "string", "description": "شماره تلفن مشتری برای پیگیری سفارش (اختیاری - اگر ارائه نشود از شماره تماس‌گیرنده استفاده می‌شود)"},
                         },
-                        "required": ["phone_number"],
+                        "required": [],
                         "additionalProperties": False
                     }
                 },
@@ -347,12 +550,12 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 {
                     "type": "function",
                     "name": "create_order",
-                    "description": "ثبت سفارش نهایی در سیستم. باید همه اطلاعات مشتری و لیست غذاها کامل باشد.",
+                    "description": "ثبت سفارش نهایی در سیستم. باید همه اطلاعات مشتری و لیست غذاها کامل باشد. شماره تلفن به صورت خودکار از تماس گرفته می‌شود.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "customer_name": {"type": "string", "description": "نام مشتری"},
-                            "phone_number": {"type": "string", "description": "شماره تلفن مشتری"},
+                            "phone_number": {"type": "string", "description": "شماره تلفن مشتری (اختیاری - به صورت خودکار از تماس گرفته می‌شود)"},
                             "address": {"type": "string", "description": "آدرس تحویل سفارش"},
                             "items": {
                                 "type": "array",
@@ -368,27 +571,33 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                             },
                             "notes": {"type": "string", "description": "یادداشت یا توضیحات اضافی (اختیاری)", "nullable": True},
                         },
-                        "required": ["customer_name", "phone_number", "address", "items"],
+                        "required": ["customer_name", "address", "items"],
                         "additionalProperties": False
                     }
                 },
             ],
             "tool_choice": "auto",
         }
-        if self.instructions:
-            self.session["instructions"] = self.instructions
+        # Use customized instructions instead of static ones
+        self.session["instructions"] = customized_instructions
+        logging.info("✅ Customized instructions applied to session")
 
-        # Send session update and optional intro
+        # Send session update
         await self.ws.send(json.dumps({"type": "session.update", "session": self.session}))
-        logging.info("FLOW start: OpenAI session.update sent")
-
-        if self.intro:
+        logging.info("FLOW start: OpenAI session.update sent (with customized scenario)")
+        
+        # Build dynamic welcome message based on order status
+        welcome_message = self._build_welcome_message(has_undelivered, order)
+        logging.info("💬 Welcome message: %s", welcome_message)
+        
+        # Send welcome message
+        if welcome_message:
             intro_payload = {
                 "modalities": ["text", "audio"],  # CRITICAL: Force audio output!
-                "instructions": "Please greet the user with the following: " + self.intro
+                "instructions": "Please greet the user with the following: " + welcome_message
             }
             await self.ws.send(json.dumps({"type": "response.create", "response": intro_payload}))
-            logging.info("FLOW start: intro response.create sent (with audio modality)")
+            logging.info("FLOW start: dynamic welcome message sent (with audio modality)")
 
         # Connect Soniox (NOT gated on intro)
         soniox_key_ok = bool(self.soniox_key and self.soniox_key != "SONIOX_API_KEY")
@@ -499,15 +708,29 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                         logging.warning("FLOW tool: transfer_call requested but transfer_to not configured")
 
                 elif name == "track_order":
-                    # Track order by phone number
-                    phone_number = args.get("phone_number")
+                    # Track order by phone number (use caller's phone automatically)
+                    phone_number = args.get("phone_number") or self.call.from_number
+                    if not phone_number:
+                        output = {"success": False, "message": "شماره تلفن در دسترس نیست."}
+                        logging.error("❌ No phone number available for tracking")
+                        await self.ws.send(json.dumps({
+                            "type": "conversation.item.create",
+                            "item": {"type": "function_call_output", "call_id": call_id,
+                                     "output": json.dumps(output, ensure_ascii=False)}
+                        }))
+                        await self.ws.send(json.dumps({
+                            "type": "response.create",
+                            "response": {"modalities": ["text", "audio"]}
+                        }))
+                        continue
+                    
                     normalized_phone = normalize_phone_number(phone_number)
                     logging.info("🔍 TRACKING ORDER")
                     logging.info("  Original: %s", phone_number)
                     logging.info("  Normalized: %s", normalized_phone)
                     
                     try:
-                        result = await api.track_order(phone_number)
+                        result = await api.track_order(normalized_phone)
                         if result and result.get("success"):
                             orders = result.get("orders", [])
                             if orders:
@@ -612,9 +835,24 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     }))
 
                 elif name == "create_order":
-                    # Create restaurant order
+                    # Create restaurant order (use caller's phone automatically)
                     customer_name = args.get("customer_name")
-                    phone_number = args.get("phone_number") or self.call.from_number or "unknown"
+                    # Always use caller's phone number automatically
+                    phone_number = self.call.from_number or args.get("phone_number")
+                    if not phone_number:
+                        output = {"success": False, "message": "شماره تلفن در دسترس نیست. لطفا دوباره تماس بگیرید."}
+                        logging.error("❌ No phone number available for order creation")
+                        await self.ws.send(json.dumps({
+                            "type": "conversation.item.create",
+                            "item": {"type": "function_call_output", "call_id": call_id,
+                                     "output": json.dumps(output, ensure_ascii=False)}
+                        }))
+                        await self.ws.send(json.dumps({
+                            "type": "response.create",
+                            "response": {"modalities": ["text", "audio"]}
+                        }))
+                        continue
+                    
                     address = args.get("address")
                     items = args.get("items", [])
                     notes = args.get("notes")
