@@ -1,0 +1,6 @@
+Django
+psycopg2-binary
+pycryptodome
+djangorestframework
+requests
+django-cors-headers

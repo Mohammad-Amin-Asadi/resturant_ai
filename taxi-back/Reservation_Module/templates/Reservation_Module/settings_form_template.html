@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}
+    Settings
+{% endblock %}
+
+{% block stylesheet %}
+    <link rel="stylesheet" href="{% static 'settings_form_style.css' %}">
+{% endblock %}
+
+{% block content %}
+    <div class="bg-blob" aria-hidden>
+        <div class="blob one"></div>
+        <div class="blob two"></div>
+    </div>
+
+    <main class="card" role="main">
+        <header class="card-header">
+            <div class="brand">
+                <div class="logo"></div>
+                <div>
+                    <h1>Settings</h1>
+                    <p class="lead">Update Settings...</p>
+                </div>
+            </div>
+            <div class="status">
+                <div class="hint">Back to <a href="{% url 'order_list_url' %}" class="success">Orders List</a></div>
+            </div>
+        </header>
+
+        <form method="post" action="{% url 'settings_url' %}" id="taxiForm" autocomplete="on">
+            {% csrf_token %}
+            {{ form.errors }}
+
+            <div class="field">
+                {{ form.organization }}
+                <label for="organization">{{ form.organization.label }}</label>
+                <div class="underline"></div>
+            </div>
+
+            <div class="field">
+                {{ form.server_url }}
+                <label for="server_url">{{ form.server_url.label }}</label>
+                <div class="underline"></div>
+            </div>
+
+
+            <div class="field full">
+                {{ form.description }}
+                <label for="description">{{ form.description.label }}</label>
+                <div class="underline"></div>
+            </div>
+
+            <div class="field full" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div class="actions">
+                    <button type="submit" class="btn send">
+                        Submit
+                    </button>
+                    <a href="{% url 'settings_url' %}" class="btn ghost">Clear</a>
+                </div>
+                <div class="hint"<strong>Submit</strong>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Architecto, sequi!
+                </div>
+            </div>
+
+        </form>
+    </main>
+{% endblock %}

@@ -1,0 +1,267 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}
+    سفارشات رستوران
+{% endblock %}
+
+{% block stylesheet %}
+    <link rel="stylesheet" href="{% static 'orders_list_style.css' %}">
+{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <header>
+            <div class="brand">
+                <div class="logo" aria-hidden="true"></div>
+                <div>
+                    <h1>سفارشات رستوران بزرگمهر</h1>
+                    <div class="subtitle">لیست سفارشات</div>
+                </div>
+            </div>
+            <div class="actions">
+                <a class="btn" href="{% url 'settings_url' %}" data-tip="تنظیمات">
+                    تنظیمات
+                </a>
+            </div>
+        </header>
+
+        <!-- Orders -->
+        <section class="orders">
+            {% for order in orders %}
+                <article class="card order-card" data-status="{{ order.status }}" style="--delay:.02s">
+                    <div class="card-head">
+                        <div style="display:flex; gap:10px; align-items:center; justify-content: space-between; width: 100%;">
+                            <div style="display:flex; gap:10px; align-items:center;">
+                                <div class="avatar" aria-hidden="true">
+                                    <svg
+                                            width="20"
+                                            height="20"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path d="M12 12c2.761 0 5-2.239 5-5s-2.239-5-5-5-5 2.239-5 5 2.239 5 5 5Zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5Z"
+                                              fill="currentColor" opacity=".7"/>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <div class="name">{{ order.customer_name }}</div>
+                                    <div class="phone">{{ order.phone_number }}</div>
+                                </div>
+                            </div>
+                            <div class="order-number">
+                                <strong>#{{ order.id }}</strong>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rows">
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 8v5l3 3" stroke="currentColor" stroke-width="2"
+                                          stroke-linecap="round"/>
+                                </svg>
+                                <strong>تاریخ:</strong>
+                            </div>
+                            <div>{{ order.order_date|date:"Y-m-d H:i" }}</div>
+                        </div>
+                        
+                        <div class="row items-row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M3 12l9-9 9 9-9 9-9-9Z" stroke="currentColor" stroke-width="2"/>
+                                </svg>
+                                <strong>آیتم‌ها:</strong>
+                            </div>
+                            <div class="items-list">
+                                {% for item in order.items.all %}
+                                    <div class="order-item">
+                                        <span class="item-name">{{ item.menu_item.name }}</span>
+                                        <span class="item-qty">× {{ item.quantity }}</span>
+                                        <span class="item-price">{{ item.subtotal|floatformat:0 }} تومان</span>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        
+                        {% if order.address %}
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" 
+                                          stroke="currentColor" stroke-width="2" fill="none"/>
+                                    <circle cx="12" cy="9" r="2.5" stroke="currentColor" stroke-width="2" fill="none"/>
+                                </svg>
+                                <strong>آدرس:</strong>
+                            </div>
+                            <div>{{ order.address }}</div>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="row total-row">
+                            <div class="label">
+                                <strong>جمع کل:</strong>
+                            </div>
+                            <div class="total-price">{{ order.total_price|floatformat:0 }} تومان</div>
+                        </div>
+                        
+                        <div class="row status-row">
+                            <div class="label">
+                                <strong>وضعیت:</strong>
+                            </div>
+                            <div class="status-selector">
+                                <div class="status-radios">
+                                    <label class="radio-option status-pending">
+                                        <input type="radio" name="status_{{ order.id }}" value="pending" 
+                                               data-order-id="{{ order.id }}"
+                                               {% if order.status == 'pending' %}checked{% endif %}
+                                               onchange="updateOrderStatus(this)">
+                                        <span class="radio-label">در انتظار تایید</span>
+                                    </label>
+                                    
+                                    <label class="radio-option status-confirmed">
+                                        <input type="radio" name="status_{{ order.id }}" value="confirmed" 
+                                               data-order-id="{{ order.id }}"
+                                               {% if order.status == 'confirmed' %}checked{% endif %}
+                                               onchange="updateOrderStatus(this)">
+                                        <span class="radio-label">تایید شده</span>
+                                    </label>
+                                    
+                                    <label class="radio-option status-preparing">
+                                        <input type="radio" name="status_{{ order.id }}" value="preparing" 
+                                               data-order-id="{{ order.id }}"
+                                               {% if order.status == 'preparing' %}checked{% endif %}
+                                               onchange="updateOrderStatus(this)">
+                                        <span class="radio-label">در حال آماده سازی</span>
+                                    </label>
+                                    
+                                    <label class="radio-option status-on_delivery">
+                                        <input type="radio" name="status_{{ order.id }}" value="on_delivery" 
+                                               data-order-id="{{ order.id }}"
+                                               {% if order.status == 'on_delivery' %}checked{% endif %}
+                                               onchange="updateOrderStatus(this)">
+                                        <span class="radio-label">تحویل به پیک</span>
+                                    </label>
+                                    
+                                    <label class="radio-option status-delivered">
+                                        <input type="radio" name="status_{{ order.id }}" value="delivered" 
+                                               data-order-id="{{ order.id }}"
+                                               {% if order.status == 'delivered' %}checked{% endif %}
+                                               onchange="updateOrderStatus(this)">
+                                        <span class="radio-label">تحویل به مشتری</span>
+                                    </label>
+                                    
+                                    <label class="radio-option status-cancelled">
+                                        <input type="radio" name="status_{{ order.id }}" value="cancelled" 
+                                               data-order-id="{{ order.id }}"
+                                               {% if order.status == 'cancelled' %}checked{% endif %}
+                                               onchange="updateOrderStatus(this)">
+                                        <span class="radio-label">لغو شده</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {% if order.notes %}
+                        <div class="row">
+                            <div class="label">
+                                <strong>یادداشت:</strong>
+                            </div>
+                            <div>{{ order.notes }}</div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </article>
+            {% empty %}
+                <div class="no-orders">
+                    <p>هیچ سفارشی یافت نشد</p>
+                </div>
+            {% endfor %}
+        </section>
+    </div>
+
+    <script>
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            console.log(`Cookie '${name}':`, cookieValue);
+            return cookieValue;
+        }
+
+        function updateOrderStatus(radioElement) {
+            console.log('✅ updateOrderStatus called');
+            const orderId = radioElement.dataset.orderId;
+            const newStatus = radioElement.value;
+            const csrftoken = getCookie('csrftoken');
+            
+            console.log('📋 Order ID:', orderId);
+            console.log('🔄 New Status:', newStatus);
+            console.log('🔑 CSRF Token:', csrftoken ? 'Present' : 'MISSING');
+            
+            if (!csrftoken) {
+                alert('خطا: توکن امنیتی یافت نشد. لطفا صفحه را رفرش کنید.');
+                location.reload();
+                return;
+            }
+            
+            // Disable all radio buttons for this order temporarily
+            const allRadios = document.querySelectorAll(`input[name="status_${orderId}"]`);
+            allRadios.forEach(r => r.disabled = true);
+            
+            fetch(`/api/orders/${orderId}/status/`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrftoken
+                },
+                body: JSON.stringify({ status: newStatus })
+            })
+            .then(response => {
+                console.log('📡 Response status:', response.status);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('✅ Success! Response data:', data);
+                
+                // Update the card's data-status attribute for visual feedback
+                const card = radioElement.closest('.order-card');
+                if (card) {
+                    card.setAttribute('data-status', newStatus);
+                }
+                
+                // Re-enable radio buttons
+                allRadios.forEach(r => r.disabled = false);
+                
+                console.log('✅ وضعیت سفارش #' + orderId + ' به "' + newStatus + '" تغییر کرد');
+            })
+            .catch(error => {
+                console.error('❌ Error:', error);
+                alert('خطا در به‌روزرسانی وضعیت سفارش: ' + error.message);
+                
+                // Re-enable and reset to original state
+                allRadios.forEach(r => r.disabled = false);
+                location.reload();
+            });
+        }
+        
+        // Auto-refresh every 30 seconds
+        setTimeout(() => location.reload(), 30000);
+        
+        // Log cookies on page load
+        console.log('All cookies:', document.cookie);
+    </script>
+{% endblock %}
+

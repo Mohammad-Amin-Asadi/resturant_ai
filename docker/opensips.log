@@ -1,0 +1,500 @@
+Sep 16 13:00:48 [21] NOTICE:Started new call for B2B.510.104.1758027648.2080172467
+Sep 16 13:01:17 [21] NOTICE:Started new call for B2B.301.98.1758027677.728297207
+Sep 16 13:01:18 [26] NOTICE:Started new call for B2B.83.244.1758027678.1551581129
+Sep 16 13:01:29 [22] NOTICE:Started new call for B2B.133.296.1758027689.1119213353
+Sep 16 13:01:35 [19] NOTICE:Started new call for B2B.477.259.1758027695.2005984759
+Sep 16 13:01:59 [25] NOTICE:Started new call for B2B.67.180.1758027719.127330709
+Sep 16 13:02:10 [22] NOTICE:Started new call for B2B.412.263.1758027730.2042555065
+Sep 16 13:02:12 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:02:12 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:02:12 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:02:12 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:02:12 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:02:12 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:02:12 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:02:12 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:02:12 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:02:20 [25] NOTICE:Started new call for B2B.14.352.1758027739.1855237216
+Sep 16 13:02:51 [23] NOTICE:Started new call for B2B.82.404.1758027770.1278178424
+Sep 16 13:03:01 [24] NOTICE:Started new call for B2B.170.144.1758027780.118592883
+Sep 16 13:03:15 [23] NOTICE:Started new call for B2B.286.360.1758027794.80796156
+Sep 16 13:03:32 [24] NOTICE:Started new call for B2B.293.403.1758027811.1124776229
+Sep 16 13:03:42 [25] NOTICE:Started new call for B2B.324.1.1758027821.1242746475
+Sep 16 13:03:43 [24] NOTICE:Started new call for B2B.420.182.1758027822.2099257667
+Sep 16 13:03:52 [24] NOTICE:Started new call for B2B.507.174.1758027831.40203465
+Sep 16 13:04:23 [18] NOTICE:Started new call for B2B.268.238.1758027862.640764533
+Sep 16 13:04:33 [24] NOTICE:Started new call for B2B.240.165.1758027872.533236953
+Sep 16 13:04:58 [25] NOTICE:Started new call for B2B.245.196.1758027897.1464575641
+Sep 16 13:05:03 [21] NOTICE:Started new call for B2B.349.167.1758027903.858118519
+Sep 16 13:05:11 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:05:12 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:05:12 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:05:12 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:05:12 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:05:12 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:05:12 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:05:12 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:05:12 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:05:14 [26] NOTICE:Started new call for B2B.348.414.1758027914.2143469409
+Sep 16 13:05:24 [24] NOTICE:Started new call for B2B.287.102.1758027924.584016727
+Sep 16 13:05:54 [22] NOTICE:Started new call for B2B.196.263.1758027954.904078273
+Sep 16 13:06:05 [22] NOTICE:Started new call for B2B.469.92.1758027965.1826367230
+Sep 16 13:06:16 [26] NOTICE:Started new call for B2B.0.351.1758027976.626979490
+Sep 16 13:06:26 [22] NOTICE:Started new call for B2B.84.68.1758027985.1646015335
+Sep 16 13:06:42 [26] NOTICE:Started new call for B2B.378.172.1758028001.1685574615
+Sep 16 13:06:46 [22] NOTICE:Started new call for B2B.103.441.1758028006.773053620
+Sep 16 13:06:56 [22] NOTICE:Started new call for B2B.460.246.1758028016.744934433
+Sep 16 13:07:27 [22] NOTICE:Started new call for B2B.84.205.1758028046.570653593
+Sep 16 13:07:37 [22] NOTICE:Started new call for B2B.72.93.1758028057.2032562433
+Sep 16 13:07:48 [22] NOTICE:Started new call for B2B.289.160.1758028068.768569307
+Sep 16 13:08:18 [26] NOTICE:Started new call for B2B.461.133.1758028098.997523602
+Sep 16 13:08:20 [22] NOTICE:Started new call for B2B.139.154.1758028100.2042487937
+Sep 16 13:08:29 [25] NOTICE:Started new call for B2B.207.384.1758028108.1293642410
+Sep 16 13:08:32 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:08:32 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:08:32 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:08:32 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:08:32 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:08:32 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:08:32 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:08:32 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:08:32 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:08:59 [24] NOTICE:Started new call for B2B.457.435.1758028138.852470201
+Sep 16 13:09:07 [24] NOTICE:Started new call for B2B.317.74.1758028146.1245447030
+Sep 16 13:09:09 [24] NOTICE:Started new call for B2B.10.235.1758028149.1842295851
+Sep 16 13:09:20 [19] NOTICE:Started new call for B2B.415.148.1758028159.823623058
+Sep 16 13:09:50 [20] NOTICE:Started new call for B2B.487.245.1758028189.1094060407
+Sep 16 13:10:00 [24] NOTICE:Started new call for B2B.32.86.1758028199.2045592760
+Sep 16 13:10:03 [24] NOTICE:Started new call for B2B.82.509.1758028202.627499253
+Sep 16 13:10:04 [21] NOTICE:Started new call for B2B.100.97.1758028203.1981054707
+Sep 16 13:10:30 [24] NOTICE:Started new call for B2B.70.317.1758028230.574688006
+Sep 16 13:10:41 [24] NOTICE:Started new call for B2B.2.111.1758028240.703715061
+Sep 16 13:10:51 [25] NOTICE:Started new call for B2B.424.131.1758028250.1707164598
+Sep 16 13:11:00 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:11:00 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:11:00 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:11:00 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:11:00 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:11:00 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:11:00 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:11:00 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:11:00 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:11:21 [25] NOTICE:Started new call for B2B.464.73.1758028281.2140375976
+Sep 16 13:11:32 [24] NOTICE:Started new call for B2B.288.338.1758028291.1129985597
+Sep 16 13:11:35 [24] NOTICE:Started new call for B2B.86.302.1758028295.1458517503
+Sep 16 13:11:50 [25] NOTICE:Started new call for B2B.120.85.1758028310.1119877064
+Sep 16 13:12:02 [24] NOTICE:Started new call for B2B.17.214.1758028322.1409680551
+Sep 16 13:12:12 [25] NOTICE:Started new call for B2B.320.511.1758028332.1763393774
+Sep 16 13:12:23 [25] NOTICE:Started new call for B2B.92.376.1758028343.1967227691
+Sep 16 13:12:53 [25] NOTICE:Started new call for B2B.496.249.1758028373.866237282
+Sep 16 13:13:04 [21] NOTICE:Started new call for B2B.322.95.1758028383.1030495718
+Sep 16 13:13:10 [21] NOTICE:Started new call for B2B.87.159.1758028389.334940411
+Sep 16 13:13:15 [25] NOTICE:Started new call for B2B.438.89.1758028394.1229653480
+Sep 16 13:13:17 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:13:17 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:13:17 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:13:17 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:13:17 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:13:17 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:13:17 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:13:17 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:13:17 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:13:45 [27] NOTICE:Started new call for B2B.169.323.1758028424.1981170171
+Sep 16 13:13:55 [27] NOTICE:Started new call for B2B.73.214.1758028435.732505210
+Sep 16 13:14:25 [26] NOTICE:Started new call for B2B.259.21.1758028465.1791839196
+Sep 16 13:14:33 [27] NOTICE:Started new call for B2B.405.414.1758028473.615352817
+Sep 16 13:14:36 [25] NOTICE:Started new call for B2B.468.254.1758028475.1807639870
+Sep 16 13:14:46 [26] NOTICE:Started new call for B2B.256.253.1758028486.223236618
+Sep 16 13:14:47 [27] NOTICE:Started new call for B2B.61.492.1758028486.419619574
+Sep 16 13:15:17 [27] NOTICE:Started new call for B2B.169.178.1758028516.1877572796
+Sep 16 13:15:27 [22] NOTICE:Started new call for B2B.96.99.1758028527.252921173
+Sep 16 13:15:58 [27] NOTICE:Started new call for B2B.118.76.1758028557.1483347706
+Sep 16 13:16:08 [23] NOTICE:Started new call for B2B.320.378.1758028568.409674747
+Sep 16 13:16:16 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:16:17 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:16:17 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:16:17 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:16:17 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:16:17 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:16:17 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:16:17 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:16:17 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:16:17 [18] NOTICE:Started new call for B2B.94.233.1758028577.2077563100
+Sep 16 13:16:19 [18] NOTICE:Started new call for B2B.74.31.1758028579.1543555670
+Sep 16 13:16:49 [24] NOTICE:Started new call for B2B.509.29.1758028609.1104034545
+Sep 16 13:17:00 [24] NOTICE:Started new call for B2B.289.282.1758028620.1439819087
+Sep 16 13:17:14 [24] NOTICE:Started new call for B2B.259.311.1758028634.115932950
+Sep 16 13:17:30 [25] NOTICE:Started new call for B2B.349.13.1758028650.1926197681
+Sep 16 13:17:41 [25] NOTICE:Started new call for B2B.393.339.1758028661.1668844490
+Sep 16 13:17:44 [24] NOTICE:Started new call for B2B.510.38.1758028664.908649728
+Sep 16 13:17:48 [22] NOTICE:Started new call for B2B.32.489.1758028668.1292616169
+Sep 16 13:17:51 [25] NOTICE:Started new call for B2B.87.469.1758028671.766312534
+Sep 16 13:18:18 [24] NOTICE:Started new call for B2B.315.69.1758028698.1320783779
+Sep 16 13:18:22 [25] NOTICE:Started new call for B2B.58.302.1758028701.1944037177
+Sep 16 13:18:32 [20] NOTICE:Started new call for B2B.412.207.1758028712.1104056962
+Sep 16 13:18:44 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:18:44 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:18:44 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:18:44 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:18:44 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:18:44 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:18:44 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:18:44 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:18:44 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:19:02 [21] NOTICE:Started new call for B2B.292.63.1758028742.1732294029
+Sep 16 13:19:13 [21] NOTICE:Started new call for B2B.217.447.1758028752.153044785
+Sep 16 13:19:24 [25] NOTICE:Started new call for B2B.318.309.1758028763.2083971172
+Sep 16 13:19:32 [19] NOTICE:Started new call for B2B.383.45.1758028771.668911373
+Sep 16 13:19:54 [25] NOTICE:Started new call for B2B.326.217.1758028793.479770444
+Sep 16 13:19:58 [24] NOTICE:Started new call for B2B.76.263.1758028797.525273276
+Sep 16 13:20:05 [21] NOTICE:Started new call for B2B.231.279.1758028804.1304820212
+Sep 16 13:20:17 [19] NOTICE:Started new call for B2B.437.115.1758028816.1501205547
+Sep 16 13:20:46 [26] NOTICE:Started new call for B2B.396.243.1758028845.1310235653
+Sep 16 13:20:56 [25] NOTICE:Started new call for B2B.33.489.1758028855.1255463185
+Sep 16 13:21:18 [25] NOTICE:Started new call for B2B.17.310.1758028877.990089067
+Sep 16 13:21:22 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:21:23 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:21:23 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:21:23 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:21:23 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:21:23 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:21:23 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:21:23 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:21:23 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:21:27 [26] NOTICE:Started new call for B2B.234.397.1758028886.1208537324
+Sep 16 13:21:37 [26] NOTICE:Started new call for B2B.449.475.1758028897.175398056
+Sep 16 13:21:48 [26] NOTICE:Started new call for B2B.15.479.1758028908.954833190
+Sep 16 13:22:18 [26] NOTICE:Started new call for B2B.284.352.1758028938.879560753
+Sep 16 13:22:28 [25] NOTICE:Started new call for B2B.207.433.1758028948.26631655
+Sep 16 13:22:43 [26] NOTICE:Started new call for B2B.16.168.1758028962.573224032
+Sep 16 13:22:58 [22] NOTICE:Started new call for B2B.390.464.1758028978.1311515827
+Sep 16 13:23:06 [24] NOTICE:Started new call for B2B.430.260.1758028985.1327713535
+Sep 16 13:23:09 [23] NOTICE:Started new call for B2B.201.64.1758028989.1463473288
+Sep 16 13:23:19 [25] NOTICE:Started new call for B2B.159.229.1758028999.1643819067
+Sep 16 13:23:49 [21] NOTICE:Started new call for B2B.391.297.1758029029.2019524253
+Sep 16 13:24:00 [20] NOTICE:Started new call for B2B.64.302.1758029040.918782220
+Sep 16 13:24:30 [21] NOTICE:Started new call for B2B.332.330.1758029070.337561912
+Sep 16 13:24:32 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:24:33 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:24:33 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:24:33 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:24:33 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:24:33 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:24:33 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:24:33 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:24:33 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:24:40 [21] NOTICE:Started new call for B2B.173.98.1758029080.1991781865
+Sep 16 13:24:47 [26] NOTICE:Started new call for B2B.138.72.1758029087.1161073461
+Sep 16 13:24:51 [26] NOTICE:Started new call for B2B.410.250.1758029091.1756377489
+Sep 16 13:25:21 [21] NOTICE:Started new call for B2B.340.3.1758029121.1207498195
+Sep 16 13:25:30 [22] NOTICE:Started new call for B2B.225.239.1758029130.711584324
+Sep 16 13:25:32 [26] NOTICE:Started new call for B2B.420.142.1758029131.212275423
+Sep 16 13:26:02 [25] NOTICE:Started new call for B2B.4.297.1758029162.1153053625
+Sep 16 13:26:12 [19] NOTICE:Started new call for B2B.494.483.1758029172.678038755
+Sep 16 13:26:23 [25] NOTICE:Started new call for B2B.6.49.1758029183.1918882001
+Sep 16 13:26:41 [25] NOTICE:Started new call for B2B.36.101.1758029201.961234940
+Sep 16 13:26:53 [25] NOTICE:Started new call for B2B.32.51.1758029213.689014353
+Sep 16 13:27:03 [21] NOTICE:Started new call for B2B.332.420.1758029223.138106762
+Sep 16 13:27:11 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:27:11 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:27:11 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:27:11 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:27:11 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:27:11 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:27:11 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:27:11 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:27:11 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:27:18 [26] NOTICE:Started new call for B2B.2.183.1758029237.1707475338
+Sep 16 13:27:44 [26] NOTICE:Started new call for B2B.155.279.1758029263.1370653092
+Sep 16 13:27:54 [24] NOTICE:Started new call for B2B.347.400.1758029274.82038870
+Sep 16 13:28:12 [25] NOTICE:Started new call for B2B.22.141.1758029292.553174026
+Sep 16 13:28:21 [25] NOTICE:Started new call for B2B.211.190.1758029301.1307670932
+Sep 16 13:28:24 [22] NOTICE:Started new call for B2B.364.391.1758029304.390124438
+Sep 16 13:28:35 [26] NOTICE:Started new call for B2B.30.210.1758029314.1027976286
+Sep 16 13:28:45 [25] NOTICE:Started new call for B2B.12.499.1758029325.1794485326
+Sep 16 13:29:15 [23] NOTICE:Started new call for B2B.471.442.1758029355.2112768659
+Sep 16 13:29:26 [26] NOTICE:Started new call for B2B.385.37.1758029365.1910069861
+Sep 16 13:29:40 [26] NOTICE:Started new call for B2B.508.431.1758029379.69536013
+Sep 16 13:29:56 [26] NOTICE:Started new call for B2B.198.492.1758029396.1283745359
+Sep 16 13:30:06 [26] NOTICE:Started new call for B2B.392.49.1758029406.1680447423
+Sep 16 13:30:10 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:30:10 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:30:10 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:30:10 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:30:10 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:30:10 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:30:10 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:30:10 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:30:10 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:30:17 [25] NOTICE:Started new call for B2B.165.326.1758029416.613329252
+Sep 16 13:30:47 [20] NOTICE:Started new call for B2B.482.78.1758029447.1786879936
+Sep 16 13:30:58 [25] NOTICE:Started new call for B2B.446.418.1758029457.1905271213
+Sep 16 13:31:06 [26] NOTICE:Started new call for B2B.207.333.1758029465.1855943191
+Sep 16 13:31:12 [23] NOTICE:Started new call for B2B.404.133.1758029471.776472537
+Sep 16 13:31:28 [24] NOTICE:Started new call for B2B.291.458.1758029488.2132995581
+Sep 16 13:31:39 [21] NOTICE:Started new call for B2B.210.198.1758029498.1341239003
+Sep 16 13:31:49 [21] NOTICE:Started new call for B2B.346.443.1758029509.1811084977
+Sep 16 13:32:20 [24] NOTICE:Started new call for B2B.216.493.1758029539.2080881804
+Sep 16 13:32:30 [22] NOTICE:Started new call for B2B.409.66.1758029550.523091015
+Sep 16 13:33:00 [25] NOTICE:Started new call for B2B.79.284.1758029580.1282994655
+Sep 16 13:33:11 [25] NOTICE:Started new call for B2B.270.254.1758029590.300657203
+Sep 16 13:33:20 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:33:20 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:33:20 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:33:20 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:33:20 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:33:20 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:33:20 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:33:20 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:33:20 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:33:52 [25] NOTICE:Started new call for B2B.270.67.1758029631.2040376654
+Sep 16 13:33:57 [25] NOTICE:Started new call for B2B.187.28.1758029636.497208009
+Sep 16 13:34:02 [20] NOTICE:Started new call for B2B.31.50.1758029641.1762330958
+Sep 16 13:34:20 [22] NOTICE:Started new call for B2B.430.494.1758029659.1999050320
+Sep 16 13:34:43 [25] NOTICE:Started new call for B2B.47.387.1758029682.216372785
+Sep 16 13:34:53 [25] NOTICE:Started new call for B2B.323.186.1758029692.120102525
+Sep 16 13:35:24 [25] NOTICE:Started new call for B2B.468.352.1758029723.423332001
+Sep 16 13:35:34 [24] NOTICE:Started new call for B2B.479.126.1758029733.1036166428
+Sep 16 13:35:45 [19] NOTICE:Started new call for B2B.363.211.1758029744.920063543
+Sep 16 13:36:15 [24] NOTICE:Started new call for B2B.259.261.1758029774.1619470617
+Sep 16 13:36:26 [25] NOTICE:Started new call for B2B.293.304.1758029785.376885463
+Sep 16 13:36:52 [25] NOTICE:Started new call for B2B.200.489.1758029811.411219972
+Sep 16 13:36:56 [19] NOTICE:Started new call for B2B.205.111.1758029815.737985189
+Sep 16 13:37:02 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:37:02 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:37:02 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:37:02 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:37:02 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:37:02 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:37:02 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:37:02 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:37:02 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:37:07 [26] NOTICE:Started new call for B2B.133.111.1758029826.775819609
+Sep 16 13:37:17 [25] NOTICE:Started new call for B2B.103.485.1758029837.1422694472
+Sep 16 13:37:33 [25] NOTICE:Started new call for B2B.475.214.1758029852.103124561
+Sep 16 13:37:47 [26] NOTICE:Started new call for B2B.372.140.1758029867.2035868420
+Sep 16 13:37:58 [25] NOTICE:Started new call for B2B.131.184.1758029877.617151571
+Sep 16 13:38:28 [26] NOTICE:Started new call for B2B.248.230.1758029907.95701926
+Sep 16 13:38:36 [23] NOTICE:Started new call for B2B.258.433.1758029915.1611065450
+Sep 16 13:38:38 [25] NOTICE:Started new call for B2B.413.208.1758029918.618643397
+Sep 16 13:38:49 [24] NOTICE:Started new call for B2B.505.481.1758029928.1719176533
+Sep 16 13:39:01 [26] NOTICE:Started new call for B2B.84.296.1758029940.763485859
+Sep 16 13:39:19 [26] NOTICE:Started new call for B2B.348.209.1758029958.633332593
+Sep 16 13:39:29 [26] NOTICE:Started new call for B2B.164.166.1758029969.1653893634
+Sep 16 13:39:40 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:39:40 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Sep 16 13:39:40 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:39:40 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:39:40 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:39:40 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:39:40 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:39:40 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:39:40 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:39:43 [19] NOTICE:Started new call for B2B.57.121.1758029982.1762903267
+Sep 16 13:40:00 [26] NOTICE:Started new call for B2B.504.182.1758029999.1661312126
+Sep 16 13:40:10 [26] NOTICE:Started new call for B2B.405.237.1758030009.2001446593
+Sep 16 13:40:20 [24] NOTICE:Started new call for B2B.127.194.1758030019.825252805
+Sep 16 13:40:34 [26] NOTICE:Started new call for B2B.149.392.1758030033.1570644976
+Sep 16 13:40:50 [26] NOTICE:Started new call for B2B.121.433.1758030049.1072702699
+Sep 16 13:41:01 [26] NOTICE:Started new call for B2B.118.164.1758030060.1949760825
+Sep 16 13:41:21 [26] NOTICE:Started new call for B2B.50.50.1758030080.677594136
+Sep 16 13:41:41 [26] NOTICE:Started new call for B2B.86.276.1758030100.935057069
+Sep 16 13:41:52 [26] NOTICE:Started new call for B2B.134.258.1758030111.287190635
+Sep 16 13:42:17 [25] NOTICE:Started new call for B2B.189.335.1758030136.404321411
+Sep 16 13:42:22 [25] NOTICE:Started new call for B2B.24.242.1758030141.1892188661
+Sep 16 13:42:29 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:42:29 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:42:29 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:42:29 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:42:29 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:42:29 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:42:29 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:42:29 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:42:29 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:42:33 [26] NOTICE:Started new call for B2B.27.262.1758030152.760934300
+Sep 16 13:42:34 [25] NOTICE:Started new call for B2B.68.200.1758030153.1945710062
+Sep 16 13:42:43 [25] NOTICE:Started new call for B2B.277.268.1758030163.43894237
+Sep 16 13:43:13 [21] NOTICE:Started new call for B2B.249.352.1758030193.1095541542
+Sep 16 13:43:24 [24] NOTICE:Started new call for B2B.264.319.1758030203.1318669774
+Sep 16 13:43:54 [26] NOTICE:Started new call for B2B.320.478.1758030233.601817259
+Sep 16 13:44:04 [26] NOTICE:Started new call for B2B.452.346.1758030244.1183320761
+Sep 16 13:44:15 [23] NOTICE:Started new call for B2B.211.507.1758030254.1554756922
+Sep 16 13:44:45 [20] NOTICE:Started new call for B2B.508.75.1758030284.2001396587
+Sep 16 13:44:55 [26] NOTICE:Started new call for B2B.426.170.1758030295.495225169
+Sep 16 13:45:02 [26] NOTICE:Started new call for B2B.180.362.1758030301.1074693807
+Sep 16 13:45:23 [25] NOTICE:Started new call for B2B.77.139.1758030322.1026299457
+Sep 16 13:45:26 [25] NOTICE:Started new call for B2B.33.478.1758030325.1422882848
+Sep 16 13:45:36 [25] NOTICE:Started new call for B2B.23.371.1758030335.1985769329
+Sep 16 13:45:39 [1] NOTICE:event_datagram:destroy: destroy module ...
+Thank you for running opensips
+Sep 16 13:45:39 [1] WARNING:core:solve_module_dependencies: module b2b_entities depends on module uac_auth, but it was not loaded!
+Listening on 
+             udp: 127.0.0.1 [127.0.0.1]:5060
+             udp: 46.249.99.216 [46.249.99.216]:5060
+             udp: 172.17.0.1 [172.17.0.1]:5060
+             udp: 172.18.0.1 [172.18.0.1]:5060
+             udp: 172.19.0.1 [172.19.0.1]:5060
+             udp: 0:0:0:0:0:0:0:1 [[0:0:0:0:0:0:0:1]]:5060
+Aliases: 
+
+Sep 16 13:45:39 [1] NOTICE:core:main: version: opensips 4.0.0-dev (x86_64/linux)
+Sep 16 13:45:39 [1] NOTICE:core:main: using 32 MB of shared memory, allocator: Q_MALLOC_DBG
+Sep 16 13:45:39 [1] NOTICE:core:main: using 16 MB of private process memory, allocator: Q_MALLOC_DBG
+Sep 16 13:45:39 [1] WARNING:core:init_reactor_size: shrinking reactor size from 1048576 (autodetected via rlimit) to 41943 (limited by memory of 10% from 16Mb)
+Sep 16 13:45:39 [1] WARNING:core:init_reactor_size: use 'open_files_limit' to enforce other limit or increase pkg memory
+Sep 16 13:45:39 [1] NOTICE:signaling:mod_init: initializing module ...
+Sep 16 13:45:39 [1] NOTICE:event_datagram:mod_init: initializing module ...
+Sep 16 13:45:47 [24] NOTICE:Started new call for B2B.261.101.1758030346.1851875508
+Sep 16 13:46:09 [24] NOTICE:Started new call for B2B.225.188.1758030369.1894061458
+Sep 16 13:46:17 [25] NOTICE:Started new call for B2B.357.469.1758030376.1075327279
+Sep 16 13:46:27 [22] NOTICE:Started new call for B2B.208.458.1758030387.669209757

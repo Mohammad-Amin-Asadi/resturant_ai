@@ -1,0 +1,77 @@
+services:
+  engine:
+    container_name: ai-voice-connector-engine
+    build:
+      context: ../opensip_stabel/engine
+      dockerfile: ./docker/Dockerfile
+    network_mode: host
+    environment:
+      CONFIG_FILE: /app/src/config.ini
+      # OpenAI
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_LANGUAGE: ${OPENAI_LANGUAGE:-fa}
+      # Soniox STT
+      SONIOX_API_KEY: ${SONIOX_API_KEY}
+      SONIOX_ENABLED: ${SONIOX_ENABLED:-true}
+      # RTP
+      RTP_PUBLIC_IP: ${RTP_PUBLIC_IP:-185.110.188.112}
+      RTP_BIND_IP: ${RTP_BIND_IP:-0.0.0.0}
+      # Backend
+      BACKEND_SERVER_URL: ${BACKEND_SERVER_URL:-http://localhost:8000}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    env_file:
+      - .env
+    volumes:
+      - ../opensip_stabel/engine/src:/app/src/
+
+  opensips:
+    container_name: ai-voice-connector-opensips
+    image: opensips/opensips:latest
+    volumes:
+      - ../opensip_stabel/engine/cfg:/etc/opensips/
+    network_mode: host
+
+  db:
+    image: postgres:17
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-AdminAvata}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-server_db}
+      TZ: ${TZ:-Asia/Tehran}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  django:
+    container_name: server
+    build:
+      context: ../taxi-back
+      dockerfile: Dockerfile
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:5000"
+    volumes:
+      - ../taxi-back:/app
+    ports:
+      - "8000:5000"
+    environment:
+      # Django Security
+      SECRET_KEY: ${SECRET_KEY}
+      DEBUG: ${DEBUG:-False}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      # Database
+      DB_NAME: ${DB_NAME:-server_db}
+      DB_USER: ${DB_USER:-AdminAvata}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      # Time Zone
+      TZ: ${TZ:-Asia/Tehran}
+    env_file:
+      - .env
+    depends_on:
+        - db
+volumes:
+  postgres_data:

@@ -1,0 +1,500 @@
+a=fmtp:97 mode=30
+a=rtpmap:9 G722/16000
+a=rtpmap:98 speex/16000
+a=rtpmap:99 speex/32000
+a=rtpmap:111 opus/48000
+a=rtpmap:112 L16/8000
+a=rtpmap:113 L16/16000
+a=rtpmap:114 L16/32000
+a=rtpmap:115 L16/44100
+a=rtpmap:116 L16/48000
+a=sendrecv
+
+2025-09-16 13:44:15,470 - tid: 140459008272192 - INFO - Received call params: {"key": "B2B.211.507.1758030254.1554756922", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=cisco 0 0 IN IP4 198.23.140.222\r\ns=SIP Call\r\nc=IN IP4 198.23.140.222\r\nt=0 0\r\nm=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:3 GSM/8000\r\na=rtpmap:96 iLBC/8000\r\na=rtpmap:97 speex/8000\r\na=fmtp:97 mode=30\r\na=rtpmap:9 G722/16000\r\na=rtpmap:98 speex/16000\r\na=rtpmap:99 speex/32000\r\na=rtpmap:111 opus/48000\r\na=rtpmap:112 L16/8000\r\na=rtpmap:113 L16/16000\r\na=rtpmap:114 L16/32000\r\na=rtpmap:115 L16/44100\r\na=rtpmap:116 L16/48000\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 198.23.140.222:56312;rport;branch=z9hG4bK2620132673\r\nMax-Forwards: 70\r\nFrom: <sip:206@46.249.99.216>;tag=4158999149\r\nTo: <sip:01118163016305@46.249.99.216>\r\nCall-ID: 1030509667\r\nCSeq: 1 INVITE\r\nContact: <sip:206@198.23.140.222:56312>\r\nUser-Agent: Cisco-SIPGateway/IOS-12.x\r\nContent-Type: application/sdp\r\nContent-Length: 562\r\n", "extra_params": null}
+2025-09-16 13:44:15,470 - tid: 140459008272192 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:44:15,472 - tid: 140459008272192 - INFO - Bound to 0.0.0.0:59037
+2025-09-16 13:44:15,472 - tid: 140459008272192 - INFO - Created SDP with IP 46.249.99.216 and port 59037
+2025-09-16 13:44:15,473 - tid: 140459008272192 - INFO - handling B2B.211.507.1758030254.1554756922 using openai AI
+2025-09-16 13:44:15,475 - tid: 140459008272192 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:44:16,021 - tid: 140459008272192 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:44:16,029 - tid: 140459008272192 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:44:16,030 - tid: 140459008272192 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:44:16,030 - tid: 140459008272192 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:44:16,030 - tid: 140459008272192 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:44:16,545 - tid: 140459008272192 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:44:16,546 - tid: 140459008272192 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:44:16,546 - tid: 140459008272192 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:44:16,546 - tid: 140459008272192 - INFO - OpenAI event: session.updated
+2025-09-16 13:44:16,546 - tid: 140459008272192 - INFO - FLOW STT: recv loop started
+2025-09-16 13:44:45,606 - tid: 140459008272192 - INFO - SDP received: v=0
+o=cisco 0 0 IN IP4 198.23.140.222
+s=SIP Call
+c=IN IP4 198.23.140.222
+t=0 0
+m=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:18 G729/8000
+a=fmtp:18 annexb=no
+a=rtpmap:3 GSM/8000
+a=rtpmap:96 iLBC/8000
+a=rtpmap:97 speex/8000
+a=fmtp:97 mode=30
+a=rtpmap:9 G722/16000
+a=rtpmap:98 speex/16000
+a=rtpmap:99 speex/32000
+a=rtpmap:111 opus/48000
+a=rtpmap:112 L16/8000
+a=rtpmap:113 L16/16000
+a=rtpmap:114 L16/32000
+a=rtpmap:115 L16/44100
+a=rtpmap:116 L16/48000
+a=sendrecv
+
+2025-09-16 13:44:45,607 - tid: 140459008272192 - INFO - Received call params: {"key": "B2B.508.75.1758030284.2001396587", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=cisco 0 0 IN IP4 198.23.140.222\r\ns=SIP Call\r\nc=IN IP4 198.23.140.222\r\nt=0 0\r\nm=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:3 GSM/8000\r\na=rtpmap:96 iLBC/8000\r\na=rtpmap:97 speex/8000\r\na=fmtp:97 mode=30\r\na=rtpmap:9 G722/16000\r\na=rtpmap:98 speex/16000\r\na=rtpmap:99 speex/32000\r\na=rtpmap:111 opus/48000\r\na=rtpmap:112 L16/8000\r\na=rtpmap:113 L16/16000\r\na=rtpmap:114 L16/32000\r\na=rtpmap:115 L16/44100\r\na=rtpmap:116 L16/48000\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 198.23.140.222:56312;rport;branch=z9hG4bK3699510843\r\nMax-Forwards: 70\r\nFrom: <sip:207@46.249.99.216>;tag=1558257325\r\nTo: <sip:+18163016305@46.249.99.216>\r\nCall-ID: 2203223337\r\nCSeq: 1 INVITE\r\nContact: <sip:207@198.23.140.222:56312>\r\nUser-Agent: Cisco-SIPGateway/IOS-12.x\r\nContent-Type: application/sdp\r\nContent-Length: 562\r\n", "extra_params": null}
+2025-09-16 13:44:45,608 - tid: 140459008272192 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:44:45,610 - tid: 140459008272192 - INFO - Bound to 0.0.0.0:36876
+2025-09-16 13:44:45,610 - tid: 140459008272192 - INFO - Created SDP with IP 46.249.99.216 and port 36876
+2025-09-16 13:44:45,611 - tid: 140459008272192 - INFO - handling B2B.508.75.1758030284.2001396587 using openai AI
+2025-09-16 13:44:45,612 - tid: 140459008272192 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:44:46,176 - tid: 140459008272192 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:44:46,184 - tid: 140459008272192 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:44:46,185 - tid: 140459008272192 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:44:46,185 - tid: 140459008272192 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:44:46,185 - tid: 140459008272192 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:44:46,684 - tid: 140459008272192 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:44:46,685 - tid: 140459008272192 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:44:46,685 - tid: 140459008272192 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:44:46,685 - tid: 140459008272192 - INFO - OpenAI event: session.updated
+2025-09-16 13:44:46,686 - tid: 140459008272192 - INFO - FLOW STT: recv loop started
+2025-09-16 13:44:55,910 - tid: 140459008272192 - INFO - SDP received: v=0
+o=cisco 0 0 IN IP4 198.23.140.222
+s=SIP Call
+c=IN IP4 198.23.140.222
+t=0 0
+m=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:18 G729/8000
+a=fmtp:18 annexb=no
+a=rtpmap:3 GSM/8000
+a=rtpmap:96 iLBC/8000
+a=rtpmap:97 speex/8000
+a=fmtp:97 mode=30
+a=rtpmap:9 G722/16000
+a=rtpmap:98 speex/16000
+a=rtpmap:99 speex/32000
+a=rtpmap:111 opus/48000
+a=rtpmap:112 L16/8000
+a=rtpmap:113 L16/16000
+a=rtpmap:114 L16/32000
+a=rtpmap:115 L16/44100
+a=rtpmap:116 L16/48000
+a=sendrecv
+
+2025-09-16 13:44:55,910 - tid: 140459008272192 - INFO - Received call params: {"key": "B2B.426.170.1758030295.495225169", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=cisco 0 0 IN IP4 198.23.140.222\r\ns=SIP Call\r\nc=IN IP4 198.23.140.222\r\nt=0 0\r\nm=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:3 GSM/8000\r\na=rtpmap:96 iLBC/8000\r\na=rtpmap:97 speex/8000\r\na=fmtp:97 mode=30\r\na=rtpmap:9 G722/16000\r\na=rtpmap:98 speex/16000\r\na=rtpmap:99 speex/32000\r\na=rtpmap:111 opus/48000\r\na=rtpmap:112 L16/8000\r\na=rtpmap:113 L16/16000\r\na=rtpmap:114 L16/32000\r\na=rtpmap:115 L16/44100\r\na=rtpmap:116 L16/48000\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 198.23.140.222:56312;rport;branch=z9hG4bK1014145508\r\nMax-Forwards: 70\r\nFrom: <sip:207@46.249.99.216>;tag=30115015\r\nTo: <sip:0018163016305@46.249.99.216>\r\nCall-ID: 3742533942\r\nCSeq: 1 INVITE\r\nContact: <sip:207@198.23.140.222:56312>\r\nUser-Agent: Cisco-SIPGateway/IOS-12.x\r\nContent-Type: application/sdp\r\nContent-Length: 562\r\n", "extra_params": null}
+2025-09-16 13:44:55,911 - tid: 140459008272192 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:44:55,912 - tid: 140459008272192 - INFO - Bound to 0.0.0.0:51465
+2025-09-16 13:44:55,913 - tid: 140459008272192 - INFO - Created SDP with IP 46.249.99.216 and port 51465
+2025-09-16 13:44:55,913 - tid: 140459008272192 - INFO - handling B2B.426.170.1758030295.495225169 using openai AI
+2025-09-16 13:44:55,915 - tid: 140459008272192 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:44:56,433 - tid: 140459008272192 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:44:56,437 - tid: 140459008272192 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:44:56,438 - tid: 140459008272192 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:44:56,438 - tid: 140459008272192 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:44:56,438 - tid: 140459008272192 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:44:56,940 - tid: 140459008272192 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:44:56,940 - tid: 140459008272192 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:44:56,940 - tid: 140459008272192 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:44:56,940 - tid: 140459008272192 - INFO - OpenAI event: session.updated
+2025-09-16 13:44:56,940 - tid: 140459008272192 - INFO - FLOW STT: recv loop started
+2025-09-16 13:45:02,690 - tid: 140459008272192 - INFO - SDP received: v=0
+o=- 329918574 329919044 IN IP4 0.0.0.0
+s=sipcall
+c=IN IP4 0.0.0.0
+t=0 0
+m=audio 7628 RTP/AVP 100 6 0 8 3 18 5 101
+a=alt:1 1 : DF50DC48 0000006A 0.0.0.0 7628
+a=fmtp:101 0-15
+a=rtpmap:100 speex/16000
+a=rtpmap:101 telephone-event/8000
+a=fmtp:101 0-11
+a=sendrecv
+
+2025-09-16 13:45:02,691 - tid: 140459008272192 - INFO - Received call params: {"key": "B2B.180.362.1758030301.1074693807", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=- 329918574 329919044 IN IP4 0.0.0.0\r\ns=sipcall\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\nm=audio 7628 RTP/AVP 100 6 0 8 3 18 5 101\r\na=alt:1 1 : DF50DC48 0000006A 0.0.0.0 7628\r\na=fmtp:101 0-15\r\na=rtpmap:100 speex/16000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-11\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 0.0.0.0:57659;branch=z9hG4bK612237003\r\nMax-Forwards: 70\r\nFrom: <sip:201@46.249.99.216>;tag=1873241576\r\nTo: <sip:90012132214976s@46.249.99.216>\r\nCall-ID: 1982297740-793262513-1165192879\r\nCSeq: 1 INVITE\r\nContact: <sip:201@0.0.0.0>\r\nContent-Type: application/sdp\r\nContent-Length: 275\r\nAllow: ACK, BYE, CANCEL, INFO, INVITE, MESSAGE, NOTIFY, OPTIONS, PRACK, REFER, REGISTER, SUBSCRIBE, UPDATE, PUBLISH\r\nUser-Agent: pplsip\r\n", "extra_params": null}
+2025-09-16 13:45:02,691 - tid: 140459008272192 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:45:02,693 - tid: 140459008272192 - INFO - Bound to 0.0.0.0:55581
+2025-09-16 13:45:02,693 - tid: 140459008272192 - INFO - Created SDP with IP 46.249.99.216 and port 55581
+2025-09-16 13:45:02,693 - tid: 140459008272192 - INFO - handling B2B.180.362.1758030301.1074693807 using openai AI
+2025-09-16 13:45:02,694 - tid: 140459008272192 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:45:03,272 - tid: 140459008272192 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:45:03,281 - tid: 140459008272192 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:45:03,282 - tid: 140459008272192 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:45:03,282 - tid: 140459008272192 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:45:03,282 - tid: 140459008272192 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:45:03,810 - tid: 140459008272192 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:45:03,811 - tid: 140459008272192 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:45:03,811 - tid: 140459008272192 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:45:03,811 - tid: 140459008272192 - INFO - OpenAI event: session.updated
+2025-09-16 13:45:03,811 - tid: 140459008272192 - INFO - FLOW STT: recv loop started
+2025-09-16 13:45:23,645 - tid: 140459008272192 - INFO - SDP received: v=0
+o=- 0 0 IN IP4 107.189.19.192
+s=Call
+c=IN IP4 107.189.19.192
+t=0 0
+m=audio 12345 RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+
+2025-09-16 13:45:23,645 - tid: 140459008272192 - INFO - Received call params: {"key": "B2B.77.139.1758030322.1026299457", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=- 0 0 IN IP4 107.189.19.192\r\ns=Call\r\nc=IN IP4 107.189.19.192\r\nt=0 0\r\nm=audio 12345 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\n", "headers": "Via: SIP/2.0/UDP 107.189.19.192;branch=z9hG4bK-19a5919b67704fc4bebf929fba2a542f\r\nFrom: <sip:101@46.249.99.216>;tag=b962e66476554688b3a814bd078756c3\r\nTo: <sip:000072716823074942@46.249.99.216>\r\nCall-ID: ade9ca96-9173-4012-8863-a1580357a40e@107.189.19.192\r\nCSeq: 1 INVITE\r\nContact: <sip:101@46.249.99.216>\r\nContent-Type: application/sdp\r\nContent-Length: 123\r\n", "extra_params": null}
+2025-09-16 13:45:23,646 - tid: 140459008272192 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:45:23,647 - tid: 140459008272192 - INFO - Bound to 0.0.0.0:63272
+2025-09-16 13:45:23,648 - tid: 140459008272192 - INFO - Created SDP with IP 46.249.99.216 and port 63272
+2025-09-16 13:45:23,649 - tid: 140459008272192 - INFO - handling B2B.77.139.1758030322.1026299457 using openai AI
+2025-09-16 13:45:23,650 - tid: 140459008272192 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:45:24,186 - tid: 140459008272192 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:45:24,190 - tid: 140459008272192 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:45:24,190 - tid: 140459008272192 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:45:24,191 - tid: 140459008272192 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:45:24,191 - tid: 140459008272192 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:45:24,695 - tid: 140459008272192 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:45:24,695 - tid: 140459008272192 - INFO - FLOW STT: Soniox init sent (fmt=mulaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:45:24,696 - tid: 140459008272192 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:45:24,696 - tid: 140459008272192 - INFO - OpenAI event: session.updated
+2025-09-16 13:45:24,696 - tid: 140459008272192 - INFO - FLOW STT: recv loop started
+2025-09-16 13:45:26,037 - tid: 140459008272192 - INFO - SDP received: v=0
+o=cisco 0 0 IN IP4 198.23.140.222
+s=SIP Call
+c=IN IP4 198.23.140.222
+t=0 0
+m=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:18 G729/8000
+a=fmtp:18 annexb=no
+a=rtpmap:3 GSM/8000
+a=rtpmap:96 iLBC/8000
+a=rtpmap:97 speex/8000
+a=fmtp:97 mode=30
+a=rtpmap:9 G722/16000
+a=rtpmap:98 speex/16000
+a=rtpmap:99 speex/32000
+a=rtpmap:111 opus/48000
+a=rtpmap:112 L16/8000
+a=rtpmap:113 L16/16000
+a=rtpmap:114 L16/32000
+a=rtpmap:115 L16/44100
+a=rtpmap:116 L16/48000
+a=sendrecv
+
+2025-09-16 13:45:26,037 - tid: 140459008272192 - INFO - Received call params: {"key": "B2B.33.478.1758030325.1422882848", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=cisco 0 0 IN IP4 198.23.140.222\r\ns=SIP Call\r\nc=IN IP4 198.23.140.222\r\nt=0 0\r\nm=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:3 GSM/8000\r\na=rtpmap:96 iLBC/8000\r\na=rtpmap:97 speex/8000\r\na=fmtp:97 mode=30\r\na=rtpmap:9 G722/16000\r\na=rtpmap:98 speex/16000\r\na=rtpmap:99 speex/32000\r\na=rtpmap:111 opus/48000\r\na=rtpmap:112 L16/8000\r\na=rtpmap:113 L16/16000\r\na=rtpmap:114 L16/32000\r\na=rtpmap:115 L16/44100\r\na=rtpmap:116 L16/48000\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 198.23.140.222:56312;rport;branch=z9hG4bK3466801198\r\nMax-Forwards: 70\r\nFrom: <sip:207@46.249.99.216>;tag=4220719734\r\nTo: <sip:01118163016305@46.249.99.216>\r\nCall-ID: 3995876585\r\nCSeq: 1 INVITE\r\nContact: <sip:207@198.23.140.222:56312>\r\nUser-Agent: Cisco-SIPGateway/IOS-12.x\r\nContent-Type: application/sdp\r\nContent-Length: 562\r\n", "extra_params": null}
+2025-09-16 13:45:26,038 - tid: 140459008272192 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:45:26,040 - tid: 140459008272192 - INFO - Bound to 0.0.0.0:43601
+2025-09-16 13:45:26,040 - tid: 140459008272192 - INFO - Created SDP with IP 46.249.99.216 and port 43601
+2025-09-16 13:45:26,041 - tid: 140459008272192 - INFO - handling B2B.33.478.1758030325.1422882848 using openai AI
+2025-09-16 13:45:26,043 - tid: 140459008272192 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:45:26,654 - tid: 140459008272192 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:45:26,685 - tid: 140459008272192 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:45:26,686 - tid: 140459008272192 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:45:26,686 - tid: 140459008272192 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:45:26,686 - tid: 140459008272192 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:45:27,165 - tid: 140459008272192 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:45:27,165 - tid: 140459008272192 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:45:27,165 - tid: 140459008272192 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:45:27,165 - tid: 140459008272192 - INFO - OpenAI event: session.updated
+2025-09-16 13:45:27,165 - tid: 140459008272192 - INFO - FLOW STT: recv loop started
+2025-09-16 13:45:36,450 - tid: 140459008272192 - INFO - SDP received: v=0
+o=cisco 0 0 IN IP4 198.23.140.222
+s=SIP Call
+c=IN IP4 198.23.140.222
+t=0 0
+m=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:18 G729/8000
+a=fmtp:18 annexb=no
+a=rtpmap:3 GSM/8000
+a=rtpmap:96 iLBC/8000
+a=rtpmap:97 speex/8000
+a=fmtp:97 mode=30
+a=rtpmap:9 G722/16000
+a=rtpmap:98 speex/16000
+a=rtpmap:99 speex/32000
+a=rtpmap:111 opus/48000
+a=rtpmap:112 L16/8000
+a=rtpmap:113 L16/16000
+a=rtpmap:114 L16/32000
+a=rtpmap:115 L16/44100
+a=rtpmap:116 L16/48000
+a=sendrecv
+
+2025-09-16 13:45:36,450 - tid: 140459008272192 - INFO - Received call params: {"key": "B2B.23.371.1758030335.1985769329", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=cisco 0 0 IN IP4 198.23.140.222\r\ns=SIP Call\r\nc=IN IP4 198.23.140.222\r\nt=0 0\r\nm=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:3 GSM/8000\r\na=rtpmap:96 iLBC/8000\r\na=rtpmap:97 speex/8000\r\na=fmtp:97 mode=30\r\na=rtpmap:9 G722/16000\r\na=rtpmap:98 speex/16000\r\na=rtpmap:99 speex/32000\r\na=rtpmap:111 opus/48000\r\na=rtpmap:112 L16/8000\r\na=rtpmap:113 L16/16000\r\na=rtpmap:114 L16/32000\r\na=rtpmap:115 L16/44100\r\na=rtpmap:116 L16/48000\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 198.23.140.222:56312;rport;branch=z9hG4bK1500832463\r\nMax-Forwards: 70\r\nFrom: <sip:208@46.249.99.216>;tag=4115701349\r\nTo: <sip:+18163016305@46.249.99.216>\r\nCall-ID: 3277302129\r\nCSeq: 1 INVITE\r\nContact: <sip:208@198.23.140.222:56312>\r\nUser-Agent: Cisco-SIPGateway/IOS-12.x\r\nContent-Type: application/sdp\r\nContent-Length: 562\r\n", "extra_params": null}
+2025-09-16 13:45:36,450 - tid: 140459008272192 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:45:36,452 - tid: 140459008272192 - INFO - Bound to 0.0.0.0:57064
+2025-09-16 13:45:36,452 - tid: 140459008272192 - INFO - Created SDP with IP 46.249.99.216 and port 57064
+2025-09-16 13:45:36,453 - tid: 140459008272192 - INFO - handling B2B.23.371.1758030335.1985769329 using openai AI
+2025-09-16 13:45:36,454 - tid: 140459008272192 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:45:37,031 - tid: 140459008272192 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:45:37,040 - tid: 140459008272192 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:45:37,041 - tid: 140459008272192 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:45:37,041 - tid: 140459008272192 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:45:37,041 - tid: 140459008272192 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:45:37,572 - tid: 140459008272192 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:45:37,572 - tid: 140459008272192 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:45:37,573 - tid: 140459008272192 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:45:37,573 - tid: 140459008272192 - INFO - OpenAI event: session.updated
+2025-09-16 13:45:37,573 - tid: 140459008272192 - INFO - FLOW STT: recv loop started
+2025-09-16 13:45:37,802 - tid: 140459008272192 - ERROR - FLOW STT: Soniox error 429: Your organization has exceeded max number of concurrent requests.
+2025-09-16 13:45:38,804 - tid: 140459008272192 - INFO - FLOW STT: Soniox WS closed (recv loop exit)
+2025-09-16 13:45:39,225 - tid: 140459008272192 - INFO - Received exit signal Signals.SIGTERM...
+2025-09-16 13:45:39,226 - tid: 140459008272192 - INFO - Cancelling 55 outstanding tasks
+2025-09-16 13:45:39,226 - tid: 140459008272192 - INFO - Call B2B.249.352.1758030193.1095541542 closing
+2025-09-16 13:45:39,226 - tid: 140459008272192 - INFO - FLOW close: closing sockets (Soniox → OpenAI)
+2025-09-16 13:45:40,467 - tid: 140459008272192 - INFO - FLOW close: Soniox WS closed
+2025-09-16 13:45:41,631 - tid: 140459008272192 - INFO - FLOW close: OpenAI WS closed
+2025-09-16 13:45:41,631 - tid: 140459008272192 - INFO - Call B2B.264.319.1758030203.1318669774 closing
+2025-09-16 13:45:41,631 - tid: 140459008272192 - INFO - FLOW close: closing sockets (Soniox → OpenAI)
+2025-09-16 13:45:41,632 - tid: 140459008272192 - INFO - FLOW close: Soniox WS closed
+2025-09-16 13:45:42,795 - tid: 140459008272192 - INFO - FLOW close: OpenAI WS closed
+2025-09-16 13:45:42,795 - tid: 140459008272192 - INFO - Call B2B.320.478.1758030233.601817259 closing
+2025-09-16 13:45:42,795 - tid: 140459008272192 - INFO - FLOW close: closing sockets (Soniox → OpenAI)
+2025-09-16 13:45:42,795 - tid: 140459008272192 - INFO - FLOW close: Soniox WS closed
+2025-09-16 13:45:43,952 - tid: 140459008272192 - INFO - FLOW close: OpenAI WS closed
+2025-09-16 13:45:43,953 - tid: 140459008272192 - INFO - Call B2B.452.346.1758030244.1183320761 closing
+2025-09-16 13:45:43,953 - tid: 140459008272192 - INFO - FLOW close: closing sockets (Soniox → OpenAI)
+2025-09-16 13:45:43,953 - tid: 140459008272192 - INFO - FLOW close: Soniox WS closed
+2025-09-16 13:45:45,115 - tid: 140459008272192 - INFO - FLOW close: OpenAI WS closed
+2025-09-16 13:45:45,115 - tid: 140459008272192 - INFO - Call B2B.211.507.1758030254.1554756922 closing
+2025-09-16 13:45:45,115 - tid: 140459008272192 - INFO - FLOW close: closing sockets (Soniox → OpenAI)
+2025-09-16 13:45:45,115 - tid: 140459008272192 - INFO - FLOW close: Soniox WS closed
+2025-09-16 13:45:46,285 - tid: 140459008272192 - INFO - FLOW close: OpenAI WS closed
+2025-09-16 13:45:46,285 - tid: 140459008272192 - INFO - Call B2B.508.75.1758030284.2001396587 closing
+2025-09-16 13:45:46,285 - tid: 140459008272192 - INFO - FLOW close: closing sockets (Soniox → OpenAI)
+2025-09-16 13:45:46,285 - tid: 140459008272192 - INFO - FLOW close: Soniox WS closed
+2025-09-16 13:45:47,449 - tid: 140459008272192 - INFO - FLOW close: OpenAI WS closed
+2025-09-16 13:45:47,449 - tid: 140459008272192 - INFO - Call B2B.426.170.1758030295.495225169 closing
+2025-09-16 13:45:47,449 - tid: 140459008272192 - INFO - FLOW close: closing sockets (Soniox → OpenAI)
+2025-09-16 13:45:47,450 - tid: 140459008272192 - INFO - FLOW close: Soniox WS closed
+2025-09-16 13:45:48,615 - tid: 140459008272192 - INFO - FLOW close: OpenAI WS closed
+2025-09-16 13:45:48,615 - tid: 140459008272192 - INFO - Call B2B.180.362.1758030301.1074693807 closing
+2025-09-16 13:45:48,616 - tid: 140459008272192 - INFO - FLOW close: closing sockets (Soniox → OpenAI)
+2025-09-16 13:45:48,616 - tid: 140459008272192 - INFO - FLOW close: Soniox WS closed
+2025-09-16 13:45:50,517 - tid: 140528499926848 - INFO - Starting server at 127.0.0.1:50060
+2025-09-16 13:46:09,766 - tid: 140528499926848 - INFO - SDP received: v=0
+o=9004624999216:5060 16264 18299 IN IP4 0.0.0.0
+s=pplsip
+c=IN IP4 0.0.0.0
+t=0 0
+m=audio 25282 RTP/AVP 100 6 0 8 3 18 5 101
+a=rtpmap:0 pcmu/8000
+a=rtpmap:101 telephone-event/8000
+a=fmtp:101 0-11
+
+2025-09-16 13:46:09,767 - tid: 140528499926848 - INFO - Received call params: {"key": "B2B.225.188.1758030369.1894061458", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=9004624999216:5060 16264 18299 IN IP4 0.0.0.0\r\ns=pplsip\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\nm=audio 25282 RTP/AVP 100 6 0 8 3 18 5 101\r\na=rtpmap:0 pcmu/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-11\r\n", "headers": "Via: SIP/2.0/UDP 0.0.0.0:58431;branch=z9hG4bK662441617\r\nMax-Forwards: 70\r\nFrom: <sip:9004624999216:5060@46.249.99.216>;tag=1276849651\r\nTo: <sip:900201095755963@46.249.99.216>\r\nCall-ID: 1089514523-2036738325-657108980\r\nCSeq: 1 INVITE\r\nContact: <sip:9004624999216:5060@62.210.24.117:58431>\r\nUser-Agent: pplsip\r\nContent-Type: application/sdp\r\nContent-Length: 207\r\n", "extra_params": null}
+2025-09-16 13:46:09,767 - tid: 140528499926848 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:46:09,771 - tid: 140528499926848 - INFO - Bound to 0.0.0.0:50947
+2025-09-16 13:46:09,771 - tid: 140528499926848 - INFO - Created SDP with IP 46.249.99.216 and port 50947
+2025-09-16 13:46:09,771 - tid: 140528499926848 - INFO - handling B2B.225.188.1758030369.1894061458 using openai AI
+2025-09-16 13:46:09,772 - tid: 140528499926848 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:46:10,325 - tid: 140528499926848 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:46:10,335 - tid: 140528499926848 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:46:10,335 - tid: 140528499926848 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:46:10,335 - tid: 140528499926848 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:46:10,335 - tid: 140528499926848 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:46:10,881 - tid: 140528499926848 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:46:10,882 - tid: 140528499926848 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:46:10,882 - tid: 140528499926848 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:46:10,882 - tid: 140528499926848 - INFO - OpenAI event: session.updated
+2025-09-16 13:46:10,882 - tid: 140528499926848 - INFO - FLOW STT: recv loop started
+2025-09-16 13:46:17,211 - tid: 140528499926848 - INFO - SDP received: v=0
+o=cisco 0 0 IN IP4 198.23.140.222
+s=SIP Call
+c=IN IP4 198.23.140.222
+t=0 0
+m=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:18 G729/8000
+a=fmtp:18 annexb=no
+a=rtpmap:3 GSM/8000
+a=rtpmap:96 iLBC/8000
+a=rtpmap:97 speex/8000
+a=fmtp:97 mode=30
+a=rtpmap:9 G722/16000
+a=rtpmap:98 speex/16000
+a=rtpmap:99 speex/32000
+a=rtpmap:111 opus/48000
+a=rtpmap:112 L16/8000
+a=rtpmap:113 L16/16000
+a=rtpmap:114 L16/32000
+a=rtpmap:115 L16/44100
+a=rtpmap:116 L16/48000
+a=sendrecv
+
+2025-09-16 13:46:17,211 - tid: 140528499926848 - INFO - Received call params: {"key": "B2B.357.469.1758030376.1075327279", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=cisco 0 0 IN IP4 198.23.140.222\r\ns=SIP Call\r\nc=IN IP4 198.23.140.222\r\nt=0 0\r\nm=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:3 GSM/8000\r\na=rtpmap:96 iLBC/8000\r\na=rtpmap:97 speex/8000\r\na=fmtp:97 mode=30\r\na=rtpmap:9 G722/16000\r\na=rtpmap:98 speex/16000\r\na=rtpmap:99 speex/32000\r\na=rtpmap:111 opus/48000\r\na=rtpmap:112 L16/8000\r\na=rtpmap:113 L16/16000\r\na=rtpmap:114 L16/32000\r\na=rtpmap:115 L16/44100\r\na=rtpmap:116 L16/48000\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 198.23.140.222:56312;rport;branch=z9hG4bK2978168270\r\nMax-Forwards: 70\r\nFrom: <sip:208@46.249.99.216>;tag=3580157340\r\nTo: <sip:01118163016305@46.249.99.216>\r\nCall-ID: 1721296079\r\nCSeq: 1 INVITE\r\nContact: <sip:208@198.23.140.222:56312>\r\nUser-Agent: Cisco-SIPGateway/IOS-12.x\r\nContent-Type: application/sdp\r\nContent-Length: 562\r\n", "extra_params": null}
+2025-09-16 13:46:17,211 - tid: 140528499926848 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:46:17,213 - tid: 140528499926848 - INFO - Bound to 0.0.0.0:56371
+2025-09-16 13:46:17,213 - tid: 140528499926848 - INFO - Created SDP with IP 46.249.99.216 and port 56371
+2025-09-16 13:46:17,214 - tid: 140528499926848 - INFO - handling B2B.357.469.1758030376.1075327279 using openai AI
+2025-09-16 13:46:17,215 - tid: 140528499926848 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:46:17,753 - tid: 140528499926848 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:46:17,759 - tid: 140528499926848 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:46:17,760 - tid: 140528499926848 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:46:17,760 - tid: 140528499926848 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:46:17,760 - tid: 140528499926848 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:46:18,248 - tid: 140528499926848 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:46:18,249 - tid: 140528499926848 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:46:18,249 - tid: 140528499926848 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:46:18,249 - tid: 140528499926848 - INFO - OpenAI event: session.updated
+2025-09-16 13:46:18,249 - tid: 140528499926848 - INFO - FLOW STT: recv loop started
+2025-09-16 13:46:27,580 - tid: 140528499926848 - INFO - SDP received: v=0
+o=cisco 0 0 IN IP4 198.23.140.222
+s=SIP Call
+c=IN IP4 198.23.140.222
+t=0 0
+m=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:18 G729/8000
+a=fmtp:18 annexb=no
+a=rtpmap:3 GSM/8000
+a=rtpmap:96 iLBC/8000
+a=rtpmap:97 speex/8000
+a=fmtp:97 mode=30
+a=rtpmap:9 G722/16000
+a=rtpmap:98 speex/16000
+a=rtpmap:99 speex/32000
+a=rtpmap:111 opus/48000
+a=rtpmap:112 L16/8000
+a=rtpmap:113 L16/16000
+a=rtpmap:114 L16/32000
+a=rtpmap:115 L16/44100
+a=rtpmap:116 L16/48000
+a=sendrecv
+
+2025-09-16 13:46:27,581 - tid: 140528499926848 - INFO - Received call params: {"key": "B2B.208.458.1758030387.669209757", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=cisco 0 0 IN IP4 198.23.140.222\r\ns=SIP Call\r\nc=IN IP4 198.23.140.222\r\nt=0 0\r\nm=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:3 GSM/8000\r\na=rtpmap:96 iLBC/8000\r\na=rtpmap:97 speex/8000\r\na=fmtp:97 mode=30\r\na=rtpmap:9 G722/16000\r\na=rtpmap:98 speex/16000\r\na=rtpmap:99 speex/32000\r\na=rtpmap:111 opus/48000\r\na=rtpmap:112 L16/8000\r\na=rtpmap:113 L16/16000\r\na=rtpmap:114 L16/32000\r\na=rtpmap:115 L16/44100\r\na=rtpmap:116 L16/48000\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 198.23.140.222:56312;rport;branch=z9hG4bK3981279849\r\nMax-Forwards: 70\r\nFrom: <sip:209@46.249.99.216>;tag=268270390\r\nTo: <sip:+18163016305@46.249.99.216>\r\nCall-ID: 3857666804\r\nCSeq: 1 INVITE\r\nContact: <sip:209@198.23.140.222:56312>\r\nUser-Agent: Cisco-SIPGateway/IOS-12.x\r\nContent-Type: application/sdp\r\nContent-Length: 562\r\n", "extra_params": null}
+2025-09-16 13:46:27,581 - tid: 140528499926848 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:46:27,583 - tid: 140528499926848 - INFO - Bound to 0.0.0.0:46595
+2025-09-16 13:46:27,583 - tid: 140528499926848 - INFO - Created SDP with IP 46.249.99.216 and port 46595
+2025-09-16 13:46:27,584 - tid: 140528499926848 - INFO - handling B2B.208.458.1758030387.669209757 using openai AI
+2025-09-16 13:46:27,589 - tid: 140528499926848 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:46:28,117 - tid: 140528499926848 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:46:28,132 - tid: 140528499926848 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:46:28,133 - tid: 140528499926848 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:46:28,133 - tid: 140528499926848 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:46:28,133 - tid: 140528499926848 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:46:28,625 - tid: 140528499926848 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:46:28,626 - tid: 140528499926848 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:46:28,626 - tid: 140528499926848 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:46:28,626 - tid: 140528499926848 - INFO - OpenAI event: session.updated
+2025-09-16 13:46:28,626 - tid: 140528499926848 - INFO - FLOW STT: recv loop started
+2025-09-16 13:46:57,967 - tid: 140528499926848 - INFO - SDP received: v=0
+o=cisco 0 0 IN IP4 198.23.140.222
+s=SIP Call
+c=IN IP4 198.23.140.222
+t=0 0
+m=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:18 G729/8000
+a=fmtp:18 annexb=no
+a=rtpmap:3 GSM/8000
+a=rtpmap:96 iLBC/8000
+a=rtpmap:97 speex/8000
+a=fmtp:97 mode=30
+a=rtpmap:9 G722/16000
+a=rtpmap:98 speex/16000
+a=rtpmap:99 speex/32000
+a=rtpmap:111 opus/48000
+a=rtpmap:112 L16/8000
+a=rtpmap:113 L16/16000
+a=rtpmap:114 L16/32000
+a=rtpmap:115 L16/44100
+a=rtpmap:116 L16/48000
+a=sendrecv
+
+2025-09-16 13:46:57,967 - tid: 140528499926848 - INFO - Received call params: {"key": "B2B.110.246.1758030417.1169647976", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=cisco 0 0 IN IP4 198.23.140.222\r\ns=SIP Call\r\nc=IN IP4 198.23.140.222\r\nt=0 0\r\nm=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:3 GSM/8000\r\na=rtpmap:96 iLBC/8000\r\na=rtpmap:97 speex/8000\r\na=fmtp:97 mode=30\r\na=rtpmap:9 G722/16000\r\na=rtpmap:98 speex/16000\r\na=rtpmap:99 speex/32000\r\na=rtpmap:111 opus/48000\r\na=rtpmap:112 L16/8000\r\na=rtpmap:113 L16/16000\r\na=rtpmap:114 L16/32000\r\na=rtpmap:115 L16/44100\r\na=rtpmap:116 L16/48000\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 198.23.140.222:56312;rport;branch=z9hG4bK3917615492\r\nMax-Forwards: 70\r\nFrom: <sip:209@46.249.99.216>;tag=1735640135\r\nTo: <sip:0018163016305@46.249.99.216>\r\nCall-ID: 2691383583\r\nCSeq: 1 INVITE\r\nContact: <sip:209@198.23.140.222:56312>\r\nUser-Agent: Cisco-SIPGateway/IOS-12.x\r\nContent-Type: application/sdp\r\nContent-Length: 562\r\n", "extra_params": null}
+2025-09-16 13:46:57,968 - tid: 140528499926848 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:46:57,969 - tid: 140528499926848 - INFO - Bound to 0.0.0.0:62682
+2025-09-16 13:46:57,969 - tid: 140528499926848 - INFO - Created SDP with IP 46.249.99.216 and port 62682
+2025-09-16 13:46:57,970 - tid: 140528499926848 - INFO - handling B2B.110.246.1758030417.1169647976 using openai AI
+2025-09-16 13:46:57,972 - tid: 140528499926848 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:46:58,517 - tid: 140528499926848 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:46:58,523 - tid: 140528499926848 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:46:58,524 - tid: 140528499926848 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:46:58,524 - tid: 140528499926848 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:46:58,524 - tid: 140528499926848 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:46:59,038 - tid: 140528499926848 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:46:59,039 - tid: 140528499926848 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:46:59,039 - tid: 140528499926848 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:46:59,039 - tid: 140528499926848 - INFO - OpenAI event: session.updated
+2025-09-16 13:46:59,039 - tid: 140528499926848 - INFO - FLOW STT: recv loop started
+2025-09-16 13:47:03,702 - tid: 140528499926848 - INFO - SDP received: v=0
+o=- 329918574 329919044 IN IP4 0.0.0.0
+s=sipcall
+c=IN IP4 0.0.0.0
+t=0 0
+m=audio 7628 RTP/AVP 100 6 0 8 3 18 5 101
+a=alt:1 1 : DF50DC48 0000006A 0.0.0.0 7628
+a=fmtp:101 0-15
+a=rtpmap:100 speex/16000
+a=rtpmap:101 telephone-event/8000
+a=fmtp:101 0-11
+a=sendrecv
+
+2025-09-16 13:47:03,703 - tid: 140528499926848 - INFO - Received call params: {"key": "B2B.4.344.1758030423.1881213757", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=- 329918574 329919044 IN IP4 0.0.0.0\r\ns=sipcall\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\nm=audio 7628 RTP/AVP 100 6 0 8 3 18 5 101\r\na=alt:1 1 : DF50DC48 0000006A 0.0.0.0 7628\r\na=fmtp:101 0-15\r\na=rtpmap:100 speex/16000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-11\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 0.0.0.0:51325;branch=z9hG4bK993185114\r\nMax-Forwards: 70\r\nFrom: <sip:149@46.249.99.216>;tag=1897053253\r\nTo: <sip:0012132214976s@46.249.99.216>\r\nCall-ID: 1790968110-1542566126-1105160942\r\nCSeq: 1 INVITE\r\nContact: <sip:149@0.0.0.0>\r\nContent-Type: application/sdp\r\nContent-Length: 275\r\nAllow: ACK, BYE, CANCEL, INFO, INVITE, MESSAGE, NOTIFY, OPTIONS, PRACK, REFER, REGISTER, SUBSCRIBE, UPDATE, PUBLISH\r\nUser-Agent: pplsip\r\n", "extra_params": null}
+2025-09-16 13:47:03,703 - tid: 140528499926848 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:47:03,704 - tid: 140528499926848 - INFO - Bound to 0.0.0.0:53626
+2025-09-16 13:47:03,705 - tid: 140528499926848 - INFO - Created SDP with IP 46.249.99.216 and port 53626
+2025-09-16 13:47:03,705 - tid: 140528499926848 - INFO - handling B2B.4.344.1758030423.1881213757 using openai AI
+2025-09-16 13:47:03,706 - tid: 140528499926848 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:47:04,257 - tid: 140528499926848 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:47:04,279 - tid: 140528499926848 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:47:04,279 - tid: 140528499926848 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:47:04,279 - tid: 140528499926848 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:47:04,280 - tid: 140528499926848 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:47:04,782 - tid: 140528499926848 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:47:04,782 - tid: 140528499926848 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:47:04,783 - tid: 140528499926848 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:47:04,783 - tid: 140528499926848 - INFO - OpenAI event: session.updated
+2025-09-16 13:47:04,783 - tid: 140528499926848 - INFO - FLOW STT: recv loop started
+2025-09-16 13:47:08,442 - tid: 140528499926848 - INFO - SDP received: v=0
+o=cisco 0 0 IN IP4 198.23.140.222
+s=SIP Call
+c=IN IP4 198.23.140.222
+t=0 0
+m=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:18 G729/8000
+a=fmtp:18 annexb=no
+a=rtpmap:3 GSM/8000
+a=rtpmap:96 iLBC/8000
+a=rtpmap:97 speex/8000
+a=fmtp:97 mode=30
+a=rtpmap:9 G722/16000
+a=rtpmap:98 speex/16000
+a=rtpmap:99 speex/32000
+a=rtpmap:111 opus/48000
+a=rtpmap:112 L16/8000
+a=rtpmap:113 L16/16000
+a=rtpmap:114 L16/32000
+a=rtpmap:115 L16/44100
+a=rtpmap:116 L16/48000
+a=sendrecv
+
+2025-09-16 13:47:08,443 - tid: 140528499926848 - INFO - Received call params: {"key": "B2B.366.239.1758030427.1396233582", "event_type": "NEW", "entity_type": "UAS", "status": 0, "reason": null, "method": "INVITE", "body": "v=0\r\no=cisco 0 0 IN IP4 198.23.140.222\r\ns=SIP Call\r\nc=IN IP4 198.23.140.222\r\nt=0 0\r\nm=audio 56313 RTP/AVP 0 8 18 3 96 97 9 98 99 111 112 113 114 115 116 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:18 G729/8000\r\na=fmtp:18 annexb=no\r\na=rtpmap:3 GSM/8000\r\na=rtpmap:96 iLBC/8000\r\na=rtpmap:97 speex/8000\r\na=fmtp:97 mode=30\r\na=rtpmap:9 G722/16000\r\na=rtpmap:98 speex/16000\r\na=rtpmap:99 speex/32000\r\na=rtpmap:111 opus/48000\r\na=rtpmap:112 L16/8000\r\na=rtpmap:113 L16/16000\r\na=rtpmap:114 L16/32000\r\na=rtpmap:115 L16/44100\r\na=rtpmap:116 L16/48000\r\na=sendrecv\r\n", "headers": "Via: SIP/2.0/UDP 198.23.140.222:56312;rport;branch=z9hG4bK2444587681\r\nMax-Forwards: 70\r\nFrom: <sip:209@46.249.99.216>;tag=1777102224\r\nTo: <sip:01118163016305@46.249.99.216>\r\nCall-ID: 3364475211\r\nCSeq: 1 INVITE\r\nContact: <sip:209@198.23.140.222:56312>\r\nUser-Agent: Cisco-SIPGateway/IOS-12.x\r\nContent-Type: application/sdp\r\nContent-Length: 562\r\n", "extra_params": null}
+2025-09-16 13:47:08,443 - tid: 140528499926848 - INFO - RTP settings - bind_ip: 0.0.0.0, rtp_ip: 127.0.1.1
+2025-09-16 13:47:08,445 - tid: 140528499926848 - INFO - Bound to 0.0.0.0:63740
+2025-09-16 13:47:08,445 - tid: 140528499926848 - INFO - Created SDP with IP 46.249.99.216 and port 63740
+2025-09-16 13:47:08,446 - tid: 140528499926848 - INFO - handling B2B.366.239.1758030427.1396233582 using openai AI
+2025-09-16 13:47:08,447 - tid: 140528499926848 - INFO - FLOW start: connecting OpenAI WS → wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17
+2025-09-16 13:47:08,972 - tid: 140528499926848 - INFO - FLOW start: OpenAI WS connected
+2025-09-16 13:47:08,991 - tid: 140528499926848 - INFO - FLOW start: OpenAI hello received
+2025-09-16 13:47:08,992 - tid: 140528499926848 - INFO - FLOW start: OpenAI session.update sent
+2025-09-16 13:47:08,992 - tid: 140528499926848 - INFO - FLOW STT: SONIOX enabled | model=stt-rt-preview | url=wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:47:08,992 - tid: 140528499926848 - INFO - FLOW STT: connecting Soniox WS → wss://stt-rt.soniox.com/transcribe-websocket
+2025-09-16 13:47:09,509 - tid: 140528499926848 - INFO - FLOW STT: Soniox WS connected
+2025-09-16 13:47:09,510 - tid: 140528499926848 - INFO - FLOW STT: Soniox init sent (fmt=alaw sr=8000 ch=1 hints=['fa'])
+2025-09-16 13:47:09,510 - tid: 140528499926848 - INFO - FLOW TTS: handle_command loop started
+2025-09-16 13:47:09,510 - tid: 140528499926848 - INFO - OpenAI event: session.updated
+2025-09-16 13:47:09,510 - tid: 140528499926848 - INFO - FLOW STT: recv loop started

@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:17
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: "EiliyaZanganeh"
+      POSTGRES_PASSWORD: "1234"
+      POSTGRES_DB: "server_db"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  django:
+    container_name: server
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:5000"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:5000"
+    environment:
+      DEBUG: "True"
+      ALLOWED_HOSTS: "localhost,127.0.0.1"
+      DB_NAME: "server_db"
+      DB_USER: "EiliyaZanganeh"
+      DB_PASSWORD: "1234"
+      DB_HOST: "db"
+      DB_PORT: "5432"
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:

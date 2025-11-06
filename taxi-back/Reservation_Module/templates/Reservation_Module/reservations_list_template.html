@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}
+    Reservations
+{% endblock %}
+
+{% block stylesheet %}
+    <link rel="stylesheet" href="{% static 'reservations_list_style.css' %}">
+{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <header>
+            <div class="brand">
+                <div class="logo" aria-hidden="true"></div>
+                <div>
+                    <h1>Reservations List</h1>
+                    <div class="subtitle">List of reserved taxis</div>
+                </div>
+            </div>
+            <div class="actions">
+                <a class="btn" href="{% url 'settings_url' %}" data-tip="settings">
+                    Settings
+                </a>
+            </div>
+        </header>
+
+        <!-- Reservations -->
+        <section class="reservations">
+            <!-- Card 1 -->
+            {% for reservation in reservations %}
+                <article class="card" data-status="pending" style="--delay:.02s">
+                    <div class="card-head">
+                        <div style="display:flex; gap:10px; align-items:center">
+                            <div class="avatar" aria-hidden="true">
+                                <svg
+                                        width="20"
+                                        height="20"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                >
+                                    <path d="M12 12c2.761 0 5-2.239 5-5s-2.239-5-5-5-5 2.239-5 5 2.239 5 5 5Zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5Z"
+                                          fill="currentColor" opacity=".7"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="name">{{ reservation.user_fullname }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rows">
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 8v5l3 3" stroke="currentColor" stroke-width="2"
+                                          stroke-linecap="round"/>
+                                </svg>
+                            </div>
+                            <div>{{ reservation.start_date_time|date:"Y-m-d H:i" }}</div>
+                        </div>
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M3 12l9-9 9 9-9 9-9-9Z" stroke="currentColor" stroke-width="2"/>
+                                </svg>
+                            </div>
+                            <div>Origin: {{ reservation.origin }}</div>
+                        </div>
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M4 7l16 0M4 12l16 0M4 17l16 0" stroke="currentColor" stroke-width="2"
+                                          stroke-linecap="round"/>
+                                </svg>
+                            </div>
+                            <div>Destination: {{ reservation.destination }}</div>
+                        </div>
+                    </div>
+                </article>
+            {% endfor %}
+
+        </section>
+    </div>
+{% endblock %}
