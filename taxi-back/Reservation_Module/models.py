@@ -1,6 +1,32 @@
 from django.db import models
 
 
+class Customer(models.Model):
+    """Customer model - stores customer information separately from orders"""
+    name = models.CharField(max_length=300, verbose_name='نام مشتری')
+    phone_number = models.CharField(max_length=15, verbose_name='شماره تلفن', db_index=True, unique=True)
+    address = models.TextField(verbose_name='آدرس', blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='تاریخ ثبت')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='آخرین به‌روزرسانی')
+    
+    class Meta:
+        verbose_name = 'مشتری'
+        verbose_name_plural = 'مشتریان'
+        ordering = ['-updated_at', 'name']
+        db_table = 'customer'
+        indexes = [
+            models.Index(fields=['phone_number']),
+            models.Index(fields=['-updated_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} - {self.phone_number}"
+    
+    def get_order_ids(self):
+        """Get all order IDs for this customer"""
+        return list(self.orders.values_list('id', flat=True))
+
+
 class MenuItem(models.Model):
     """Menu item model for restaurant"""
     name = models.CharField(max_length=300, verbose_name='نام غذا')
@@ -37,6 +63,15 @@ class Order(models.Model):
         ('cancelled', 'لغو شده'),
     ]
     
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='orders',
+        verbose_name='مشتری'
+    )
+    # Keep these fields for backward compatibility and data migration
     customer_name = models.CharField(max_length=300, verbose_name='نام مشتری')
     phone_number = models.CharField(max_length=15, verbose_name='شماره تلفن', db_index=True)
     address = models.TextField(verbose_name='آدرس', blank=True, null=True)
@@ -59,6 +94,7 @@ class Order(models.Model):
             models.Index(fields=['-order_date']),
             models.Index(fields=['phone_number', '-order_date']),
             models.Index(fields=['status']),
+            models.Index(fields=['customer', '-order_date']),
         ]
 
     def __str__(self):
@@ -69,6 +105,17 @@ class Order(models.Model):
         total = sum(item.subtotal for item in self.items.all())
         self.total_price = total
         return total
+    
+    def save(self, *args, **kwargs):
+        """Auto-link to Customer if phone_number matches"""
+        if not self.customer and self.phone_number:
+            try:
+                customer = Customer.objects.get(phone_number=self.phone_number)
+                self.customer = customer
+            except (Customer.DoesNotExist, Exception):
+                # Handle case where Customer table doesn't exist or customer not found
+                pass
+        super().save(*args, **kwargs)
 
 
 class OrderItem(models.Model):

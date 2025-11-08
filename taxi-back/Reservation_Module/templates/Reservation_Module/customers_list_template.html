@@ -1,0 +1,167 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}
+    مشتریان رستوران
+{% endblock %}
+
+{% block stylesheet %}
+    <link rel="stylesheet" href="{% static 'orders_list_style.css' %}">
+    <link rel="stylesheet" href="{% static 'customers_list_style.css' %}">
+{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <header>
+            <div class="brand">
+                <div class="logo" aria-hidden="true"></div>
+                <div>
+                    <h1>مشتریان رستوران بزرگمهر</h1>
+                    <div class="subtitle">لیست مشتریان</div>
+                </div>
+            </div>
+            <div class="actions">
+                <a class="btn" href="{% url 'order_list_url' %}" data-tip="سفارشات">
+                    سفارشات
+                </a>
+            </div>
+        </header>
+
+        <!-- Customers -->
+        <section class="customers">
+            {% for customer in customers %}
+                <article class="card customer-card">
+                    <div class="card-head">
+                        <div style="display:flex; gap:10px; align-items:center; justify-content: space-between; width: 100%;">
+                            <div style="display:flex; gap:10px; align-items:center;">
+                                <div class="avatar" aria-hidden="true">
+                                    <svg
+                                            width="20"
+                                            height="20"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                        <path d="M12 12c2.761 0 5-2.239 5-5s-2.239-5-5-5-5 2.239-5 5 2.239 5 5 5Zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5Z"
+                                              fill="currentColor" opacity=".7"/>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <div class="name">{{ customer.name }}</div>
+                                    <div class="phone">{{ customer.phone_number }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="rows">
+                        {% with all_addresses=customer.get_all_addresses %}
+                        {% if all_addresses %}
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" 
+                                          stroke="currentColor" stroke-width="2" fill="none"/>
+                                    <circle cx="12" cy="9" r="2.5" stroke="currentColor" stroke-width="2" fill="none"/>
+                                </svg>
+                                <strong>آدرس{% if all_addresses|length > 1 %}‌ها{% endif %}:</strong>
+                            </div>
+                            <div class="addresses-list">
+                                {% for address in all_addresses %}
+                                    <div class="address-item">{{ address }}</div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% endwith %}
+                        
+                        <div class="row orders-row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2" 
+                                          stroke="currentColor" stroke-width="2" fill="none"/>
+                                </svg>
+                                <strong>شماره سفارشات:</strong>
+                            </div>
+                            <div class="order-ids-list">
+                                {% if customer.orders.all %}
+                                    {% for order in customer.orders.all %}
+                                        <a href="{% url 'order_list_url' %}#order-{{ order.id }}" 
+                                           class="order-id-badge" 
+                                           title="مشاهده جزئیات سفارش #{{ order.id }}"
+                                           style="display: inline-block; position: relative; z-index: 100; pointer-events: auto; cursor: pointer;"
+                                           onclick="console.log('🔗 Clicked order link: #order-{{ order.id }}', this.href);">
+                                            #{{ order.id }}
+                                        </a>
+                                    {% endfor %}
+                                {% else %}
+                                    <span class="no-orders-text">هیچ سفارشی ثبت نشده</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M12 8v5l3 3" stroke="currentColor" stroke-width="2"
+                                          stroke-linecap="round"/>
+                                </svg>
+                                <strong>آخرین به‌روزرسانی:</strong>
+                            </div>
+                            <div>{{ customer.updated_at|date:"Y-m-d H:i" }}</div>
+                        </div>
+                    </div>
+                </article>
+            {% empty %}
+                <div class="no-customers">
+                    <p>هیچ مشتریی یافت نشد</p>
+                </div>
+            {% endfor %}
+        </section>
+    </div>
+    
+    <script>
+        // Debug: Log all order ID links on page load and ensure they're clickable
+        document.addEventListener('DOMContentLoaded', function() {
+            const orderLinks = document.querySelectorAll('.order-id-badge');
+            console.log('🔗 Order ID links found:', orderLinks.length);
+            orderLinks.forEach((link, index) => {
+                console.log(`  Link ${index + 1}:`, {
+                    href: link.href,
+                    text: link.textContent.trim(),
+                    computedStyle: window.getComputedStyle(link).pointerEvents,
+                    zIndex: window.getComputedStyle(link).zIndex
+                });
+                
+                // Force ensure link is clickable
+                link.style.pointerEvents = 'auto';
+                link.style.cursor = 'pointer';
+                link.style.zIndex = '100';
+                link.style.position = 'relative';
+                
+                // Test if link is clickable - add multiple event listeners
+                link.addEventListener('click', function(e) {
+                    console.log('✅ Link clicked!', {
+                        href: this.href,
+                        text: this.textContent.trim(),
+                        event: e
+                    });
+                    // Don't prevent default - let the link work naturally
+                }, true); // Use capture phase
+                
+                link.addEventListener('mousedown', function(e) {
+                    console.log('🖱️ Mouse down on link:', this.href);
+                });
+            });
+            
+            // Also check for any overlays that might block clicks
+            const customerCards = document.querySelectorAll('.customer-card');
+            customerCards.forEach(card => {
+                const computedStyle = window.getComputedStyle(card);
+                if (computedStyle.pointerEvents === 'none') {
+                    console.warn('⚠️ Customer card has pointer-events: none');
+                }
+            });
+        });
+    </script>
+{% endblock %}
+

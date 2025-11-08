@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from Reservation_Module.models import MenuItem, Order, OrderItem, RestaurantSettings
+from Reservation_Module.models import Customer, MenuItem, Order, OrderItem, RestaurantSettings
 
 
 class MenuItemSerializer(serializers.ModelSerializer):

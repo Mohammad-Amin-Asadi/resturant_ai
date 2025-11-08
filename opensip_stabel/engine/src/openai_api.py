@@ -79,6 +79,10 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
 
         # state for tools
         self.temp_order_data = {}  # Temporary storage for order being placed
+        self.user_mentioned_items = []  # Track items user mentioned during conversation for verification
+        self.customer_name_from_history = None  # Customer name from previous orders
+        self.recent_order_ids = set()  # Track recently created orders to prevent duplicates
+        self.last_order_time = None  # Track when last order was created
 
         # === codec mapping ===
         if self.codec.name == "mulaw":
@@ -248,45 +252,69 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
     async def _check_undelivered_order(self, phone_number):
         """
         Check if caller has any undelivered orders.
-        Returns: (has_undelivered, order_dict) tuple
+        Returns: (has_undelivered, orders_list) tuple
+        - orders_list: List of ALL undelivered orders (not just the latest)
+        - Also extracts customer name from Customer table (not just orders) for use in welcome message
         """
         if not phone_number:
             logging.warning("⚠️  No phone number provided for order check")
-            return False, None
+            return False, []
         
         try:
             # Normalize phone number
             normalized_phone = normalize_phone_number(phone_number)
             logging.info("🔍 Checking orders for phone: %s (normalized: %s)", phone_number, normalized_phone)
             
+            # First, try to get customer name from Customer table (persists even after orders are deleted)
+            try:
+                customer_info = await api.get_customer_info(normalized_phone)
+                if customer_info.get("success") and customer_info.get("customer"):
+                    self.customer_name_from_history = customer_info["customer"].get("name")
+                    if self.customer_name_from_history:
+                        logging.info("  👤 Customer name from Customer table: %s", self.customer_name_from_history)
+            except Exception as e:
+                logging.debug("  Could not get customer info from Customer table: %s", e)
+            
             # Track orders
             result = await api.track_order(normalized_phone)
             
             if not result or not result.get("success"):
                 logging.warning("⚠️  Failed to check orders: %s", result.get("message", "Unknown error"))
-                return False, None
+                return False, []
             
             orders = result.get("orders", [])
             if not orders:
                 logging.info("📭 No orders found for phone: %s", normalized_phone)
-                return False, None
+                # Customer name already set from Customer table above
+                return False, []
             
             # Filter out delivered and cancelled orders
             undelivered = [o for o in orders if o.get("status") not in ["delivered", "cancelled"]]
             
             if undelivered:
-                # Return the latest undelivered order (first in list, as orders are sorted by date desc)
-                latest_order = undelivered[0]
-                logging.info("✅ Found undelivered order: ID=%s, Status=%s", 
-                           latest_order.get('id'), latest_order.get('status_display'))
-                return True, latest_order
+                # If we don't have customer name from Customer table, get it from order
+                if not self.customer_name_from_history:
+                    latest_order = undelivered[0]
+                    self.customer_name_from_history = latest_order.get('customer_name')
+                logging.info("✅ Found %d undelivered order(s):", len(undelivered))
+                for order in undelivered:
+                    logging.info("  - Order ID=%s, Status=%s", order.get('id'), order.get('status_display'))
+                if self.customer_name_from_history:
+                    logging.info("  👤 Customer name: %s", self.customer_name_from_history)
+                return True, undelivered
             else:
                 logging.info("✅ All orders are delivered or cancelled for phone: %s", normalized_phone)
-                return False, None
+                # If we don't have customer name from Customer table, get it from latest order
+                if not self.customer_name_from_history and orders:
+                    latest_order = orders[0]
+                    self.customer_name_from_history = latest_order.get('customer_name')
+                if self.customer_name_from_history:
+                    logging.info("  👤 Customer name: %s", self.customer_name_from_history)
+                return False, []
                 
         except Exception as e:
             logging.error(f"❌ Exception checking orders: {e}", exc_info=True)
-            return False, None
+            return False, []
 
     def _format_items_list_persian(self, items):
         """
@@ -332,51 +360,65 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             all_except_last = "، ".join(formatted_items[:-1])
             return f"{all_except_last} و {formatted_items[-1]}"
 
-    def _build_welcome_message(self, has_undelivered_order, order=None):
+    def _build_welcome_message(self, has_undelivered_order, orders=None):
         """
         Build welcome message based on order status.
         Always includes hello and restaurant name.
-        When order exists, includes full order details: customer_name, address, items, status.
+        When orders exist, includes full order details for ALL orders.
+        Uses customer name from history if available (with 'عزیز' suffix).
         """
-        base_greeting = "سلام و درود بر شما، با رستوران بزرگمهر تماس گرفته‌اید"
+        # Use customer name from history if available
+        if self.customer_name_from_history:
+            base_greeting = f"سلام و درود بر شما {self.customer_name_from_history} عزیز، با رستوران بزرگمهر تماس گرفته‌اید"
+        else:
+            base_greeting = "سلام و درود بر شما، با رستوران بزرگمهر تماس گرفته‌اید"
         
-        if has_undelivered_order and order:
-            # Has undelivered order - report full order details
-            order_id = order.get('id', '')
-            status_display = order.get('status_display', '')
-            customer_name = order.get('customer_name', '')
-            address = order.get('address', '')
-            items = order.get('items', [])
-            order_status = order.get('status', '')
+        if has_undelivered_order and orders and len(orders) > 0:
+            # Has undelivered orders - report ALL orders
+            order_details_list = []
             
-            logging.info(f"📋 Building welcome message for order ID={order_id}, items_count={len(items)}, address={bool(address)}")
-            
-            # Format items list in Persian using helper function
-            items_text = self._format_items_list_persian(items)
-            logging.info(f"📦 Formatted items text: {items_text}")
-            
-            # Build status text based on order status
-            if order_status == 'preparing':
-                status_text = f"{status_display} توسط رستوران است"
-            else:
-                status_text = f"{status_display} است"
-            
-            # Build the detailed message matching the exact format
-            # Format: "سفارش شما به شماره ی X که [items]، به مقصد [address] ثبت شده بود [status] است"
-            if items_text:
-                if address:
-                    order_details = f"سفارش شما به شماره ی {order_id} که {items_text}، به مقصد {address} ثبت شده بود {status_text}"
+            for order in orders:
+                order_id = order.get('id', '')
+                status_display = order.get('status_display', '')
+                address = order.get('address', '')
+                items = order.get('items', [])
+                order_status = order.get('status', '')
+                
+                logging.info(f"📋 Processing order ID={order_id}, items_count={len(items)}, address={bool(address)}")
+                
+                # Format items list in Persian using helper function
+                items_text = self._format_items_list_persian(items)
+                
+                # Build status text based on order status
+                if order_status == 'preparing':
+                    status_text = f"{status_display} توسط رستوران است"
                 else:
-                    order_details = f"سفارش شما به شماره ی {order_id} که {items_text} ثبت شده بود {status_text}"
-            else:
-                # Fallback if items are not available
-                if address:
-                    order_details = f"سفارش شما به شماره ی {order_id} به مقصد {address} ثبت شده بود {status_text}"
+                    status_text = f"{status_display} است"
+                
+                # Build order detail for this order
+                if items_text:
+                    if address:
+                        order_detail = f"سفارش شما به شماره ی {order_id} که {items_text}، به مقصد {address} ثبت شده بود {status_text}"
+                    else:
+                        order_detail = f"سفارش شما به شماره ی {order_id} که {items_text} ثبت شده بود {status_text}"
                 else:
-                    order_details = f"سفارش شما به شماره ی {order_id} ثبت شده بود {status_text}"
+                    # Fallback if items are not available
+                    if address:
+                        order_detail = f"سفارش شما به شماره ی {order_id} به مقصد {address} ثبت شده بود {status_text}"
+                    else:
+                        order_detail = f"سفارش شما به شماره ی {order_id} ثبت شده بود {status_text}"
+                
+                order_details_list.append(order_detail)
+            
+            # Join all order details
+            if len(order_details_list) == 1:
+                orders_text = order_details_list[0]
+            else:
+                # For multiple orders, join with "همچنین" (also)
+                orders_text = "، ".join(order_details_list[:-1]) + f" و همچنین {order_details_list[-1]}"
             
             # Join greeting and order details, then add closing
-            full_message = f"{base_greeting}، {order_details}."
+            full_message = f"{base_greeting}، {orders_text}."
             full_message += " از صبر و شکیبایی شما متشکریم. اگر امر دیگری هست در خدمت شما هستم."
             
             return full_message
@@ -384,38 +426,67 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             # No undelivered orders - ask if they want to order
             return f"{base_greeting}. آیا می‌خواهید سفارش جدیدی ثبت کنید؟"
 
-    def _build_customized_instructions(self, has_undelivered_order, order=None):
+    def _build_customized_instructions(self, has_undelivered_order, orders=None):
         """
         Build customized instructions based on call context.
         Different scenarios for different call situations.
         """
+        # Add customer name instruction if available
+        name_instruction = ""
+        if self.customer_name_from_history:
+            name_instruction = f"مهم: نام مشتری ({self.customer_name_from_history}) از سفارشات قبلی در دسترس است. نیازی به پرسیدن نام نیست و از نام موجود استفاده کن. "
+        else:
+            name_instruction = "اگر مشتری قبلا سفارش نداده، نام مشتری را بپرس. "
+        
         base_instructions = (
             "با لحنی گرم و پر انرژی صحبت کن "
             "فقط و فقط فارسی صحبت کن ، به هیچ زبان دیگه ای بجز فارسی صحبت نکن."
             " تو یک دستیار هوشمند رستوران بزرگمهر هستی. همیشه حرفه‌ای و مودب و بااحترام و پر انرژی و شاد حرف میزنی . "
             "همیشه با لحن مودب و با احترام و پر انرژی حرف بزن"
             "مهم: شماره تلفن مشتری به صورت خودکار از تماس گرفته می‌شود و نیازی به پرسیدن آن نیست. "
+            f"{name_instruction}"
             "همیشه طبیعی و دوستانه صحبت کن."
             " به هیچ وجه اشاره ای به جنسیت شخص نکن  (مثل خطاب کردن و گفتن آقا یا خانم)"
             "کاربر از تو چیزی خارج از سفارش نمیپرسه ، پس اگر موقع انتخاب غذاها چیزی شنیدی که انگار مرتبط با غذا نیست بررسی کن ببین شبیه ترین چیز به یکی از اسم های غذا چی بود بعد یکی از غذاها رو در نظر بگیر و ازش بپرس که آیا منظورش این بود یا نه . مثلا اگر کاربر کفت کووید میخواستم ، بگو کوبیده  فرمودین ؟ فقط اگر چیزی گفت که اسم غذا نبود مستقیما."
             "با مشتری حرفه ای و با لحن احترام سخن بگو و با تو خطاب نکن ، همیشه از کلمه ی شما استفاده کن"
+            "خیلی مهم: هیچ وقت تماس را قطع نکن مگر اینکه کاربر صریحا و واضحا بگوید که می‌خواهد تماس را تمام کند (مثل خداحافظ، بای، تماس رو قطع کن، تماس رو پایان بده). "
+            "اگر کاربر فقط سکوت کرد یا چیزی مثل '.' گفت، این به معنای پایان تماس نیست. منتظر بمان و بپرس آیا کار دیگری هست یا نه. "
+            "هیچ وقت در وسط صحبت خودت تماس را قطع نکن. همیشه منتظر بمان تا کاربر بگوید که می‌خواهد تماس را تمام کند."
         )
         
-        if has_undelivered_order and order:
-            # Scenario 1: Caller has undelivered order
-            order_status = order.get('status', '')
-            order_id = order.get('id', '')
-            status_display = order.get('status_display', '')
+        if has_undelivered_order and orders and len(orders) > 0:
+            # Scenario 1: Caller has undelivered order(s)
+            orders_count = len(orders)
+            if orders_count == 1:
+                order = orders[0]
+                order_status = order.get('status', '')
+                order_id = order.get('id', '')
+                status_display = order.get('status_display', '')
+                
+                scenario_instructions = (
+                    f"وضعیت سفارش: مشتری دارای سفارش شماره {order_id} با وضعیت {status_display} است که هنوز تحویل داده نشده. "
+                    "وظیفه تو: "
+                    "1) ابتدا وضعیت سفارش را که در پیام خوش‌آمدگویی گفته شده، تایید کن و بپرس آیا سوالی درباره سفارش دارند. "
+                    "2) اگر می‌خواهند سفارش جدید ثبت کنند، به سناریوی ثبت سفارش جدید برو. "
+                    "3) اگر می‌خواهند وضعیت سفارش را دوباره بررسی کنند، می‌توانی از تابع track_order استفاده کنی (شماره تلفن به صورت خودکار استفاده می‌شود). "
+                    "4) اگر سوالی درباره زمان تحویل یا جزئیات سفارش دارند، با لحن دوستانه پاسخ بده. "
+                )
+            else:
+                # Multiple orders
+                order_ids = [str(o.get('id', '')) for o in orders]
+                scenario_instructions = (
+                    f"وضعیت سفارش: مشتری دارای {orders_count} سفارش تحویل نشده با شماره‌های {', '.join(order_ids)} است. "
+                    "وضعیت همه سفارشات در پیام خوش‌آمدگویی گفته شده است. "
+                    "وظیفه تو: "
+                    "1) ابتدا وضعیت سفارشات را که در پیام خوش‌آمدگویی گفته شده، تایید کن و بپرس آیا سوالی درباره سفارشات دارند. "
+                    "2) اگر می‌خواهند سفارش جدید ثبت کنند، به سناریوی ثبت سفارش جدید برو. "
+                    "3) اگر می‌خواهند وضعیت سفارشات را دوباره بررسی کنند، می‌توانی از تابع track_order استفاده کنی (شماره تلفن به صورت خودکار استفاده می‌شود). "
+                    "4) اگر سوالی درباره زمان تحویل یا جزئیات سفارشات دارند، با لحن دوستانه پاسخ بده. "
+                )
             
-            scenario_instructions = (
-                f"وضعیت سفارش: مشتری دارای سفارش شماره {order_id} با وضعیت {status_display} است که هنوز تحویل داده نشده. "
-                "وظیفه تو: "
-                "1) ابتدا وضعیت سفارش را که در پیام خوش‌آمدگویی گفته شده، تایید کن و بپرس آیا سوالی درباره سفارش دارند. "
-                "2) اگر می‌خواهند سفارش جدید ثبت کنند، به سناریوی ثبت سفارش جدید برو. "
-                "3) اگر می‌خواهند وضعیت سفارش را دوباره بررسی کنند، می‌توانی از تابع track_order استفاده کنی (شماره تلفن به صورت خودکار استفاده می‌شود). "
-                "4) اگر سوالی درباره زمان تحویل یا جزئیات سفارش دارند، با لحن دوستانه پاسخ بده. "
-            )
-            
+            # Add status-specific guidance for latest order
+            latest_order = orders[0]
+            order_status = latest_order.get('status', '')
             if order_status in ['pending', 'confirmed']:
                 scenario_instructions += (
                     "نکته: سفارش در حال تایید یا تایید شده است. به مشتری اطمینان بده که سفارش در حال آماده شدن است. "
@@ -436,11 +507,24 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 "وضعیت سفارش: مشتری سفارش تحویل نشده‌ای ندارد. "
                 "وظیفه تو: دریافت سفارش جدید. "
                 "سناریوی ثبت سفارش جدید: "
-                "1) نام مشتری را بپرس "
+            )
+            if self.customer_name_from_history:
+                scenario_instructions += (
+                    f"1) نام مشتری ({self.customer_name_from_history}) از سفارشات قبلی در دسترس است، نیازی به پرسیدن نیست. "
+                )
+            else:
+                scenario_instructions += (
+                    "1) نام مشتری را بپرس "
+                )
+            scenario_instructions += (
                 "2) اگر کاربر درخواست کرد پیشنهادات ویژه رستوران را با get_menu_specials بگیر و بگو "
                 "3) سفارش غذای اصلی را بگیر، اگر عین آن غذا موجود نبود شبیه‌ترین را با search_menu_item بیاب و پیشنهاد بده "
                 "4) آدرس تحویل را بگیر (شماره تلفن به صورت خودکار از تماس گرفته می‌شود و نیازی به پرسیدن آن نیست)"
-                "5) همه موارد سفارش را تایید کن و با create_order ثبت کن. "
+                "5) خیلی مهم: وقتی کاربر چند غذا را در یک جمله می‌گوید، حتما همه را یادداشت کن و هیچ کدام را از قلم نینداز. "
+                "6) قبل از ثبت سفارش، همه غذاهایی که کاربر گفته را برایش تکرار کن تا مطمئن شوی همه را درست فهمیده‌ای. "
+                "7) همه موارد سفارش را تایید کن و با create_order ثبت کن. "
+                "8) خیلی مهم: فقط یک بار create_order را صدا بزن برای هر سفارش. هیچ وقت برای یک سفارش چند بار create_order را صدا نزن. "
+                "9) بعد از ثبت سفارش، اگر پیام موفقیت آمیز بود، سفارش ثبت شده است و نیازی به ثبت دوباره نیست. "
             )
         
         return base_instructions + " " + scenario_instructions
@@ -471,20 +555,24 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         caller_phone = self.call.from_number
         logging.info("📞 Caller phone number: %s", caller_phone or "Not available")
         
-        # Check for undelivered orders
-        has_undelivered, order = await self._check_undelivered_order(caller_phone)
-        logging.info("📦 Order status: has_undelivered=%s, order_id=%s", 
-                     has_undelivered, order.get('id') if order else None)
+        # Check for undelivered orders (returns list of ALL undelivered orders)
+        has_undelivered, orders = await self._check_undelivered_order(caller_phone)
+        logging.info("📦 Order status: has_undelivered=%s, orders_count=%d", 
+                     has_undelivered, len(orders) if orders else 0)
+        if orders:
+            for order in orders:
+                logging.info("   - Order ID: %s, Status: %s", order.get('id'), order.get('status_display'))
         
         # Build DYNAMIC customized instructions based on call context
         # This creates a unique scenario for EACH call based on order status
-        customized_instructions = self._build_customized_instructions(has_undelivered, order)
+        customized_instructions = self._build_customized_instructions(has_undelivered, orders)
         logging.info("🎯 DYNAMIC SCENARIO: Customized instructions built for this specific call")
-        if has_undelivered and order:
-            logging.info("   → Scenario: Customer with undelivered order (ID: %s, Status: %s)", 
-                        order.get('id'), order.get('status_display'))
+        if has_undelivered and orders:
+            logging.info("   → Scenario: Customer with %d undelivered order(s)", len(orders))
         else:
             logging.info("   → Scenario: New customer or all orders delivered - focus on new order")
+        if self.customer_name_from_history:
+            logging.info("   → Customer name from history: %s", self.customer_name_from_history)
         logging.debug("   Instructions preview: %s", customized_instructions[:200] + "...")
 
         # Build session with customized instructions
@@ -504,8 +592,11 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             "max_response_output_tokens": self.cfg.get("max_tokens", "OPENAI_MAX_TOKENS", "inf"),
             "tools": [
                 {"type": "function", "name": "terminate_call",
-                 "description": "Call me when any of the session's parties want to terminate the call. "
-                                "Always say goodbye before hanging up. Send the audio first, then call this function.",
+                 "description": "ONLY call this function when the USER explicitly says they want to end the call. "
+                                "Examples: 'خداحافظ', 'بای', 'تماس رو قطع کن', 'تماس رو پایان بده', 'خداحافظی', 'خداحافظی می‌کنم'. "
+                                "DO NOT call this if: user is silent, user says '.', user pauses, or you just finished talking. "
+                                "ONLY call when user EXPLICITLY requests to end the call. "
+                                "Always say a friendly goodbye first, then call this function.",
                  "parameters": {"type": "object", "properties": {}, "required": []}},
                 {"type": "function", "name": "transfer_call",
                  "description": "call the function if a request was received to transfer a call with an operator, a person",
@@ -587,7 +678,7 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         logging.info("FLOW start: OpenAI session.update sent (with customized scenario)")
         
         # Build dynamic welcome message based on order status
-        welcome_message = self._build_welcome_message(has_undelivered, order)
+        welcome_message = self._build_welcome_message(has_undelivered, orders)
         logging.info("💬 Welcome message: %s", welcome_message)
         
         # Send welcome message
@@ -695,7 +786,7 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
 
                 if name == "terminate_call":
                     logging.info("FLOW tool: terminate_call requested")
-                    await self.terminate_call()
+                    self.terminate_call()  # Not async, don't await
 
                 elif name == "transfer_call":
                     if self.transfer_to:
@@ -835,6 +926,26 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     }))
 
                 elif name == "create_order":
+                    # Prevent duplicate orders - check if we just created an order recently
+                    current_time = time.time()
+                    if self.last_order_time and (current_time - self.last_order_time) < 10:  # 10 seconds cooldown
+                        logging.warning("⚠️  DUPLICATE ORDER PREVENTION: Order creation attempted too soon after last order (%.1f seconds ago)", 
+                                      current_time - self.last_order_time)
+                        output = {
+                            "success": False, 
+                            "message": "سفارش قبلی شما در حال پردازش است. لطفا چند لحظه صبر کنید."
+                        }
+                        await self.ws.send(json.dumps({
+                            "type": "conversation.item.create",
+                            "item": {"type": "function_call_output", "call_id": call_id,
+                                     "output": json.dumps(output, ensure_ascii=False)}
+                        }))
+                        await self.ws.send(json.dumps({
+                            "type": "response.create",
+                            "response": {"modalities": ["text", "audio"]}
+                        }))
+                        continue
+                    
                     # Create restaurant order (use caller's phone automatically)
                     customer_name = args.get("customer_name")
                     # Always use caller's phone number automatically
@@ -884,12 +995,68 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                         
                         if result and result.get("success"):
                             order = result.get("order", {})
-                            output = {
-                                "success": True,
-                                "message": f"سفارش شماره {order.get('id')} با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
-                                "order_id": order.get("id"),
-                                "total_price": order.get("total_price")
-                            }
+                            order_id = order.get('id')
+                            
+                            # Track this order creation to prevent duplicates
+                            self.last_order_time = time.time()
+                            self.recent_order_ids.add(order_id)
+                            logging.info("✅ Order ID %s tracked to prevent duplicates", order_id)
+                            
+                            # Verify order was created correctly - fetch it from database (for logging only)
+                            logging.info("🔍 Verifying order creation - fetching order from database...")
+                            try:
+                                # Fetch the created order to verify all items were captured
+                                verify_result = await api.track_order(normalized_phone)
+                                if verify_result and verify_result.get("success"):
+                                    all_orders = verify_result.get("orders", [])
+                                    created_order = None
+                                    for o in all_orders:
+                                        if o.get('id') == order_id:
+                                            created_order = o
+                                            break
+                                    
+                                    if created_order:
+                                        db_items = created_order.get('items', [])
+                                        submitted_items = items
+                                        
+                                        # Compare submitted items with database items (for logging only)
+                                        submitted_item_names = {item.get('item_name', '').lower().strip() for item in submitted_items}
+                                        db_item_names = {item.get('menu_item_name', '').lower().strip() for item in db_items}
+                                        
+                                        missing_items = submitted_item_names - db_item_names
+                                        
+                                        if missing_items:
+                                            logging.warning("⚠️  MISSING ITEMS DETECTED (logged for debugging): %s", missing_items)
+                                            logging.warning("   Submitted: %s", submitted_item_names)
+                                            logging.warning("   In DB: %s", db_item_names)
+                                            # Note: We don't tell the bot to create another order - just log it
+                                        
+                                        logging.info("✅ Order verification passed - order created successfully")
+                                        output = {
+                                            "success": True,
+                                            "message": f"سفارش شماره {order.get('id')} با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
+                                            "order_id": order.get("id"),
+                                            "total_price": order.get("total_price")
+                                        }
+                                    else:
+                                        logging.warning("⚠️  Could not find created order in database for verification")
+                                        output = {
+                                            "success": True,
+                                            "message": f"سفارش شماره {order.get('id')} با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
+                                            "order_id": order.get("id"),
+                                            "total_price": order.get("total_price")
+                                        }
+                            except Exception as verify_error:
+                                logging.error(f"⚠️  Error verifying order: {verify_error}")
+                                # Fallback output if verification fails
+                                output = {
+                                    "success": True,
+                                    "message": f"سفارش شماره {order.get('id')} با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
+                                    "order_id": order.get("id"),
+                                    "total_price": order.get("total_price")
+                                }
+                            
+                            # Output is set in verification block above
                             logging.info("✅ ORDER CREATED SUCCESSFULLY!")
                             logging.info("Order ID: %s", order.get('id'))
                             logging.info("Total Price: %s تومان", f"{order.get('total_price'):,}")

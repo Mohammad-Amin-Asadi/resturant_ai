@@ -11,13 +11,18 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U EiliyaZanganeh -d server_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   django:
     container_name: server
     build:
       context: ./
       dockerfile: Dockerfile
-    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:5000"
+    command: python manage.py runserver 0.0.0.0:5000
     volumes:
       - .:/app
     ports:
@@ -31,7 +36,13 @@ services:
       DB_HOST: "db"
       DB_PORT: "5432"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import django; django.setup(); from django.db import connection; connection.ensure_connection()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

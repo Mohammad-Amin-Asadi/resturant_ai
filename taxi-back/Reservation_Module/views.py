@@ -1,9 +1,9 @@
 import base64
 import json
+import logging
 
 from Crypto.Cipher import PKCS1_OAEP, AES
-from django.urls import reverse_lazy
-from django.views.generic import ListView, UpdateView
+from django.views.generic import ListView
 from django.http import JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
@@ -14,31 +14,10 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from Crypto.PublicKey import RSA
 
-from Reservation_Module.models import MenuItem, Order, OrderItem, RestaurantSettings, InscriptionModel
-from Reservation_Module.forms import SettingsForm
+from Reservation_Module.models import Customer, MenuItem, Order, OrderItem, RestaurantSettings, InscriptionModel
 from Reservation_Module.serializers import (
     MenuItemSerializer, OrderSerializer, OrderItemSerializer, RestaurantSettingsSerializer
 )
-
-
-class SettingView(UpdateView):
-    """Restaurant settings view"""
-    template_name = 'Reservation_Module/settings_form_template.html'
-    form_class = SettingsForm
-    success_url = reverse_lazy('order_list_url')
-
-    def get_context_data(self, **kwargs):
-        context = super(SettingView, self).get_context_data(**kwargs)
-        settings = RestaurantSettings.objects.filter(is_active=True).first()
-        context['settings'] = settings
-        return context
-
-    def get_object(self, queryset=None):
-        return RestaurantSettings.objects.filter(is_active=True).first()
-
-    def form_valid(self, form):
-        form.save()
-        return super(SettingView, self).form_valid(form)
 
 
 @method_decorator(ensure_csrf_cookie, name='dispatch')
@@ -50,6 +29,22 @@ class OrderListView(ListView):
     
     def get_queryset(self):
         return Order.objects.prefetch_related('items__menu_item').all()
+
+
+@method_decorator(ensure_csrf_cookie, name='dispatch')
+class CustomerListView(ListView):
+    """Display all customers with their order IDs"""
+    template_name = 'Reservation_Module/customers_list_template.html'
+    model = Customer
+    context_object_name = 'customers'
+    
+    def get_queryset(self):
+        try:
+            return Customer.objects.prefetch_related('orders').all().order_by('-updated_at', 'name')
+        except Exception as e:
+            # Handle case where Customer table doesn't exist yet (migration not run)
+            logging.error(f"Error loading customers: {e}")
+            return Customer.objects.none()
 
 
 class MenuAPIView(APIView):
@@ -96,6 +91,42 @@ class OrderTrackingView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+class CustomerInfoView(APIView):
+    """Get customer information by phone number"""
+    
+    def get(self, request: Request):
+        phone_number = request.query_params.get('phone_number')
+        
+        if not phone_number:
+            return Response(
+                {'error': 'شماره تلفن الزامی است'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            customer = Customer.objects.get(phone_number=phone_number)
+            return Response({
+                'success': True,
+                'customer': {
+                    'name': customer.name,
+                    'phone_number': customer.phone_number,
+                    'address': customer.address,
+                }
+            }, status=status.HTTP_200_OK)
+        except Customer.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'مشتری یافت نشد'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            # Handle case where Customer table doesn't exist yet
+            logging.error(f"Error getting customer info: {e}")
+            return Response({
+                'success': False,
+                'message': 'خطا در دریافت اطلاعات مشتری'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 @api_view(['PATCH'])
 def update_order_status(request, order_id):
     """Update order status"""
@@ -121,6 +152,27 @@ def update_order_status(request, order_id):
     
     serializer = OrderSerializer(order)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+@api_view(['DELETE'])
+def delete_order(request, order_id):
+    """Delete an order from database"""
+    try:
+        order = Order.objects.get(id=order_id)
+    except Order.DoesNotExist:
+        return Response(
+            {'error': 'سفارش یافت نشد'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Delete the order (CASCADE will delete related OrderItems automatically)
+    order_id_deleted = order.id
+    order.delete()
+    
+    return Response(
+        {'message': f'سفارش #{order_id_deleted} با موفقیت حذف شد', 'order_id': order_id_deleted},
+        status=status.HTTP_200_OK
+    )
 
 
 class AddOrderView(APIView):
@@ -151,10 +203,47 @@ class AddOrderView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Create or update Customer record first
+        customer_name = decrypted_data.get('customer_name')
+        phone_number = decrypted_data.get('phone_number')
+        address = decrypted_data.get('address')
+        
+        if phone_number:
+            try:
+                customer, created = Customer.objects.get_or_create(
+                    phone_number=phone_number,
+                    defaults={
+                        'name': customer_name or '',
+                        'address': address or ''
+                    }
+                )
+                # Update customer info if it exists (in case name or address changed)
+                if not created:
+                    if customer_name and customer.name != customer_name:
+                        customer.name = customer_name
+                    if address and customer.address != address:
+                        customer.address = address
+                    customer.save()
+            except Exception as e:
+                # Handle case where Customer table doesn't exist yet
+                logging.warning(f"Could not create/update customer record: {e}")
+                # Continue with order creation even if customer creation fails
+        
         # Create order with items
         order_serializer = OrderSerializer(data=decrypted_data)
         if order_serializer.is_valid():
-            order_serializer.save()
+            order = order_serializer.save()
+            # Link order to customer if customer was found/created
+            if phone_number:
+                try:
+                    customer = Customer.objects.get(phone_number=phone_number)
+                    order.customer = customer
+                    order.save()
+                except (Customer.DoesNotExist, Exception) as e:
+                    # Handle case where Customer table doesn't exist or other errors
+                    logging.debug(f"Could not link order to customer: {e}")
+                    pass
+            
             return Response(
                 {"message": "سفارش با موفقیت ثبت شد", "order": order_serializer.data},
                 status=status.HTTP_201_CREATED

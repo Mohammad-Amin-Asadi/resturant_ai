@@ -20,8 +20,8 @@
                 </div>
             </div>
             <div class="actions">
-                <a class="btn" href="{% url 'settings_url' %}" data-tip="تنظیمات">
-                    تنظیمات
+                <a class="btn" href="{% url 'customers_list_url' %}" data-tip="مشتریان">
+                    مشتریان
                 </a>
             </div>
         </header>
@@ -29,7 +29,7 @@
         <!-- Orders -->
         <section class="orders">
             {% for order in orders %}
-                <article class="card order-card" data-status="{{ order.status }}" style="--delay:.02s">
+                <article id="order-{{ order.id }}" class="card order-card" data-status="{{ order.status }}" style="--delay:.02s; scroll-margin-top: 100px;">
                     <div class="card-head">
                         <div style="display:flex; gap:10px; align-items:center; justify-content: space-between; width: 100%;">
                             <div style="display:flex; gap:10px; align-items:center;">
@@ -50,8 +50,20 @@
                                     <div class="phone">{{ order.phone_number }}</div>
                                 </div>
                             </div>
-                            <div class="order-number">
-                                <strong>#{{ order.id }}</strong>
+                            <div style="display:flex; gap:10px; align-items:center;">
+                                <div class="order-number">
+                                    <strong>#{{ order.id }}</strong>
+                                </div>
+                                <button class="delete-order-btn" 
+                                        data-order-id="{{ order.id }}"
+                                        onclick="deleteOrder(this)"
+                                        title="حذف سفارش"
+                                        aria-label="حذف سفارش شماره {{ order.id }}">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M9 3v1H4v2h1v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6h1V4h-5V3H9zm2 2h2v1h-2V5zm-1 3v11h2V8h-2zm4 0v11h2V8h-2z" 
+                                              fill="currentColor" opacity="0.8"/>
+                                    </svg>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -256,12 +268,238 @@
                 location.reload();
             });
         }
+
+        function deleteOrder(buttonElement) {
+            console.log('🗑️ deleteOrder called');
+            const orderId = buttonElement.dataset.orderId;
+            const csrftoken = getCookie('csrftoken');
+            
+            console.log('📋 Order ID to delete:', orderId);
+            console.log('🔑 CSRF Token:', csrftoken ? 'Present' : 'MISSING');
+            
+            if (!csrftoken) {
+                alert('خطا: توکن امنیتی یافت نشد. لطفا صفحه را رفرش کنید.');
+                location.reload();
+                return;
+            }
+            
+            // Confirm deletion
+            if (!confirm(`آیا مطمئن هستید که می‌خواهید سفارش #${orderId} را حذف کنید؟\n\nاین عمل قابل بازگشت نیست.`)) {
+                console.log('❌ Deletion cancelled by user');
+                return;
+            }
+            
+            // Disable button during deletion
+            buttonElement.disabled = true;
+            buttonElement.style.opacity = '0.5';
+            
+            // Find the order card for removal
+            const orderCard = buttonElement.closest('.order-card');
+            
+            fetch(`/api/orders/${orderId}/delete/`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrftoken
+                }
+            })
+            .then(response => {
+                console.log('📡 Delete response status:', response.status);
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.error || `HTTP ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('✅ Success! Order deleted:', data);
+                
+                // Remove the order card from the page with animation
+                if (orderCard) {
+                    orderCard.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                    orderCard.style.opacity = '0';
+                    orderCard.style.transform = 'translateX(-20px)';
+                    
+                    setTimeout(() => {
+                        orderCard.remove();
+                        
+                        // Check if there are no more orders
+                        const remainingOrders = document.querySelectorAll('.order-card');
+                        if (remainingOrders.length === 0) {
+                            // Reload to show "no orders" message
+                            location.reload();
+                        }
+                    }, 300);
+                } else {
+                    // Fallback: reload page if card not found
+                    location.reload();
+                }
+            })
+            .catch(error => {
+                console.error('❌ Error deleting order:', error);
+                alert('خطا در حذف سفارش: ' + error.message);
+                
+                // Re-enable button
+                buttonElement.disabled = false;
+                buttonElement.style.opacity = '1';
+            });
+        }
         
         // Auto-refresh every 30 seconds
         setTimeout(() => location.reload(), 30000);
         
         // Log cookies on page load
         console.log('All cookies:', document.cookie);
+        
+        // Scroll to order if hash is present in URL
+        function scrollToOrder(retryCount = 0) {
+            const hash = window.location.hash;
+            const fullUrl = window.location.href;
+            console.log('🔍 Checking hash:', hash);
+            console.log('🔗 Full URL:', fullUrl);
+            
+            if (hash && hash.startsWith('#order-')) {
+                const orderId = hash.substring(7); // Remove '#order-' prefix
+                console.log('📋 Looking for order ID:', orderId);
+                
+                // Try multiple methods to find the element
+                let orderElement = document.getElementById(`order-${orderId}`);
+                
+                // Fallback: try querySelector
+                if (!orderElement) {
+                    orderElement = document.querySelector(`[id="order-${orderId}"]`);
+                }
+                
+                // Fallback: try by data attribute
+                if (!orderElement) {
+                    const allCards = document.querySelectorAll('.order-card');
+                    for (let card of allCards) {
+                        if (card.id === `order-${orderId}`) {
+                            orderElement = card;
+                            break;
+                        }
+                    }
+                }
+                
+                if (orderElement) {
+                    console.log('✅ Found order element:', orderElement);
+                    console.log('📍 Element position:', {
+                        top: orderElement.offsetTop,
+                        id: orderElement.id,
+                        visible: orderElement.offsetParent !== null
+                    });
+                    
+                    // Wait for animations and page to fully render
+                    const delay = 500 + (retryCount * 200);
+                    setTimeout(() => {
+                        // Prevent any default scroll behavior
+                        window.scrollTo(0, 0);
+                        
+                        // Small delay to let browser settle
+                        setTimeout(() => {
+                            // Calculate position manually for more control
+                            const elementTop = orderElement.offsetTop;
+                            const elementHeight = orderElement.offsetHeight;
+                            const windowHeight = window.innerHeight;
+                            const scrollPosition = elementTop - (windowHeight / 2) + (elementHeight / 2) - 50; // 50px offset for header
+                            
+                            // Scroll to the element
+                            window.scrollTo({
+                                top: Math.max(0, scrollPosition),
+                                behavior: 'smooth'
+                            });
+                            
+                            // Also use scrollIntoView as backup
+                            orderElement.scrollIntoView({ 
+                                behavior: 'smooth', 
+                                block: 'center',
+                                inline: 'nearest'
+                            });
+                            
+                            // Small additional delay to ensure scroll completes
+                            setTimeout(() => {
+                                // Highlight the order card temporarily
+                                const originalBoxShadow = orderElement.style.boxShadow || '';
+                                const originalBorder = orderElement.style.border || '';
+                                const originalTransform = orderElement.style.transform || '';
+                                
+                                orderElement.style.transition = 'all 0.3s ease';
+                                orderElement.style.boxShadow = '0 0 20px rgba(74, 163, 255, 0.6), 0 14px 40px rgba(0, 0, 0, .45)';
+                                orderElement.style.border = '2px solid var(--brand)';
+                                orderElement.style.transform = 'scale(1.02)';
+                                
+                                // Remove highlight after 3 seconds
+                                setTimeout(() => {
+                                    orderElement.style.boxShadow = originalBoxShadow;
+                                    orderElement.style.border = originalBorder;
+                                    orderElement.style.transform = originalTransform;
+                                }, 3000);
+                            }, 200);
+                        }, 50);
+                    }, delay);
+                } else {
+                    console.log(`⚠️ Order #${orderId} not found on page (attempt ${retryCount + 1})`);
+                    // Debug: show what IDs are available
+                    const allIds = Array.from(document.querySelectorAll('[id^="order-"]')).map(el => el.id);
+                    console.log('🔍 Available order IDs:', allIds);
+                    
+                    // Retry up to 5 times with increasing delays (in case page is still loading)
+                    if (retryCount < 5) {
+                        setTimeout(() => {
+                            scrollToOrder(retryCount + 1);
+                        }, 300);
+                    } else {
+                        console.error(`❌ Order #${orderId} not found after ${retryCount + 1} attempts`);
+                        console.error('Available IDs:', allIds);
+                    }
+                }
+            } else if (hash) {
+                console.log('⚠️ Hash found but does not match #order- pattern:', hash);
+            }
+        }
+        
+        // Run on page load with multiple strategies
+        function initScrollToOrder() {
+            // Strategy 1: If DOM is already loaded
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                setTimeout(() => scrollToOrder(), 100);
+            } else {
+                // Strategy 2: Wait for DOMContentLoaded
+                document.addEventListener('DOMContentLoaded', () => {
+                    setTimeout(() => scrollToOrder(), 200);
+                });
+            }
+            
+            // Strategy 3: Also try on window load (after all resources loaded)
+            window.addEventListener('load', () => {
+                setTimeout(() => scrollToOrder(), 300);
+            });
+        }
+        
+        initScrollToOrder();
+        
+        // Also handle hash changes (if user clicks another order link)
+        window.addEventListener('hashchange', () => {
+            console.log('🔄 Hash changed, scrolling to new order');
+            scrollToOrder();
+        });
+        
+        // Handle case where hash is already in URL when page loads
+        if (window.location.hash) {
+            console.log('📍 Hash present on initial load:', window.location.hash);
+        }
+        
+        // Debug: Log all order IDs on the page
+        function debugOrderIds() {
+            const allOrderCards = document.querySelectorAll('[id^="order-"]');
+            console.log('📊 Total order cards found:', allOrderCards.length);
+            const orderIds = Array.from(allOrderCards).map(card => card.id);
+            console.log('📋 All order IDs on page:', orderIds);
+        }
+        
+        // Run debug after page loads
+        setTimeout(debugOrderIds, 1000);
     </script>
 {% endblock %}
 

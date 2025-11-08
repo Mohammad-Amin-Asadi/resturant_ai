@@ -1,5 +1,5 @@
 from django.contrib import admin
-from Reservation_Module.models import MenuItem, Order, OrderItem, RestaurantSettings, InscriptionModel
+from Reservation_Module.models import Customer, MenuItem, Order, OrderItem, RestaurantSettings, InscriptionModel
 
 
 class OrderItemInline(admin.TabularInline):
@@ -33,6 +33,14 @@ class OrderAdmin(admin.ModelAdmin):
 @admin.register(RestaurantSettings)
 class RestaurantSettingsAdmin(admin.ModelAdmin):
     list_display = ('restaurant_name', 'phone_number', 'is_active')
+
+
+@admin.register(Customer)
+class CustomerAdmin(admin.ModelAdmin):
+    list_display = ('name', 'phone_number', 'updated_at')
+    list_filter = ('updated_at',)
+    search_fields = ('name', 'phone_number')
+    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(InscriptionModel)

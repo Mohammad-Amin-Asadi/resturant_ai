@@ -63,6 +63,7 @@ class API:
         self.orders_url = f"{self.base_url}/api/orders/"
         self.menu_url = f"{self.base_url}/api/menu/"
         self.track_url = f"{self.base_url}/api/orders/track/"
+        self.customer_info_url = f"{self.base_url}/api/customers/info/"
     
     async def track_order(self, phone_number: str) -> dict:
         """Track order by phone number"""
@@ -81,6 +82,25 @@ class API:
             return {"success": True, "orders": data}
         except requests.exceptions.RequestException as e:
             logging.error(f"Error tracking order: {e}")
+            return {"success": False, "message": str(e)}
+    
+    async def get_customer_info(self, phone_number: str) -> dict:
+        """Get customer information by phone number"""
+        try:
+            # Normalize phone number (remove spaces, convert Persian digits)
+            normalized_phone = normalize_phone_number(phone_number)
+            logging.info(f"📱 Getting customer info for phone: '{phone_number}' -> '{normalized_phone}'")
+            
+            response = requests.get(
+                self.customer_info_url,
+                params={"phone_number": normalized_phone},
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error getting customer info: {e}")
             return {"success": False, "message": str(e)}
     
     async def get_menu_specials(self) -> dict:
