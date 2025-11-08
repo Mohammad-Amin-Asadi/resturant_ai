@@ -25,6 +25,19 @@ class Customer(models.Model):
     def get_order_ids(self):
         """Get all order IDs for this customer"""
         return list(self.orders.values_list('id', flat=True))
+    
+    def get_all_addresses(self):
+        """Get all unique addresses from customer's orders"""
+        addresses = []
+        # Get address from Customer model if exists
+        if self.address:
+            addresses.append(self.address)
+        # Get all unique addresses from orders
+        order_addresses = self.orders.exclude(address__isnull=True).exclude(address='').values_list('address', flat=True).distinct()
+        for addr in order_addresses:
+            if addr and addr not in addresses:  # Avoid duplicates
+                addresses.append(addr)
+        return addresses
 
 
 class MenuItem(models.Model):

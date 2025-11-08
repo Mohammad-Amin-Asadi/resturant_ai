@@ -459,24 +459,36 @@
             }
         }
         
+        // Prevent default browser scroll behavior on hash navigation
+        if (window.location.hash) {
+            // Temporarily remove hash to prevent browser auto-scroll
+            const hash = window.location.hash;
+            history.replaceState(null, null, window.location.pathname + window.location.search);
+            // Restore hash after a moment
+            setTimeout(() => {
+                history.replaceState(null, null, hash);
+            }, 50);
+        }
+        
         // Run on page load with multiple strategies
         function initScrollToOrder() {
             // Strategy 1: If DOM is already loaded
             if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                setTimeout(() => scrollToOrder(), 100);
+                setTimeout(() => scrollToOrder(), 200);
             } else {
                 // Strategy 2: Wait for DOMContentLoaded
                 document.addEventListener('DOMContentLoaded', () => {
-                    setTimeout(() => scrollToOrder(), 200);
+                    setTimeout(() => scrollToOrder(), 300);
                 });
             }
             
             // Strategy 3: Also try on window load (after all resources loaded)
             window.addEventListener('load', () => {
-                setTimeout(() => scrollToOrder(), 300);
+                setTimeout(() => scrollToOrder(), 400);
             });
         }
         
+        // Initialize immediately
         initScrollToOrder();
         
         // Also handle hash changes (if user clicks another order link)

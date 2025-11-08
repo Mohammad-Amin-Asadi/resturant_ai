@@ -229,6 +229,50 @@ class AddOrderView(APIView):
                 logging.warning(f"Could not create/update customer record: {e}")
                 # Continue with order creation even if customer creation fails
         
+        # CRITICAL VALIDATION: Ensure order has items
+        items = decrypted_data.get('items', [])
+        if not items or len(items) == 0:
+            logging.error("❌ ORDER REJECTED: No items in order")
+            return Response(
+                {'error': 'سفارش باید حداقل یک آیتم داشته باشد. لیست غذاها خالی است.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate each item
+        for idx, item in enumerate(items):
+            menu_item_id = item.get('menu_item')
+            quantity = item.get('quantity', 0)
+            if not menu_item_id:
+                logging.error("❌ ORDER REJECTED: Item %d missing menu_item ID", idx + 1)
+                return Response(
+                    {'error': f'آیتم {idx + 1} نامعتبر است: شناسه غذا مشخص نشده'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if quantity <= 0:
+                logging.error("❌ ORDER REJECTED: Item %d has invalid quantity: %d", idx + 1, quantity)
+                return Response(
+                    {'error': f'آیتم {idx + 1} نامعتبر است: تعداد باید بیشتر از صفر باشد'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Validate required fields
+        customer_name = decrypted_data.get('customer_name', '').strip()
+        address = decrypted_data.get('address', '').strip()
+        
+        if not customer_name:
+            logging.error("❌ ORDER REJECTED: Missing customer_name")
+            return Response(
+                {'error': 'نام مشتری الزامی است'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not address:
+            logging.error("❌ ORDER REJECTED: Missing address")
+            return Response(
+                {'error': 'آدرس تحویل الزامی است'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         # Create order with items
         order_serializer = OrderSerializer(data=decrypted_data)
         if order_serializer.is_valid():

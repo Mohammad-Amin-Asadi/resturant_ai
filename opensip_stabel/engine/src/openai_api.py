@@ -31,6 +31,12 @@ import re
 from api_sender import API
 from phone_normalizer import normalize_phone_number
 import os
+import audioop
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 # دریافت آدرس سرور از environment variable
 BACKEND_SERVER_URL = os.getenv("BACKEND_SERVER_URL", "http://localhost:8000")
@@ -89,6 +95,8 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             self.codec_name = "g711_ulaw"
         elif self.codec.name == "alaw":
             self.codec_name = "g711_alaw"
+        elif self.codec.name == "opus":
+            self.codec_name = "opus"  # Opus codec for high quality
         else:
             self.codec_name = "g711_ulaw"
 
@@ -98,12 +106,23 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         # دریافت کلید از config یا environment variable
         self.soniox_key = self.soniox_cfg.get("key", "SONIOX_API_KEY")
         self.soniox_url = self.soniox_cfg.get("url", "SONIOX_URL", "wss://stt-rt.soniox.com/transcribe-websocket")
+        # Use better model for Persian recognition
         self.soniox_model = self.soniox_cfg.get("model", "SONIOX_MODEL", "stt-rt-preview")
-        self.soniox_lang_hints = self.soniox_cfg.get("language_hints", "SONIOX_LANGUAGE_HINTS", ["fa"])
-        self.soniox_enable_diar = bool(self.soniox_cfg.get("enable_speaker_diarization", "SONIOX_ENABLE_DIARIZATION", True))
+        # Enhanced language hints for better Persian recognition
+        self.soniox_lang_hints = self.soniox_cfg.get("language_hints", "SONIOX_LANGUAGE_HINTS", ["fa", "fa-IR"])
+        # Disable diarization for better accuracy (single speaker)
+        self.soniox_enable_diar = bool(self.soniox_cfg.get("enable_speaker_diarization", "SONIOX_ENABLE_DIARIZATION", False))
+        # Enable LID for better language detection
         self.soniox_enable_lid = bool(self.soniox_cfg.get("enable_language_identification", "SONIOX_ENABLE_LID", True))
+        # Enable endpoint detection for better sentence boundaries
         self.soniox_enable_epd = bool(self.soniox_cfg.get("enable_endpoint_detection", "SONIOX_ENABLE_ENDPOINT", True))
         self.soniox_keepalive_sec = int(self.soniox_cfg.get("keepalive_sec", "SONIOX_KEEPALIVE_SEC", 15))
+        
+        # Audio quality enhancement: convert G.711 to PCM and upsample for Soniox
+        # Temporarily disabled by default to avoid WebSocket connection issues
+        # Can be enabled via SONIOX_UPSAMPLE_AUDIO=true if needed
+        self.soniox_upsample = bool(self.soniox_cfg.get("upsample_audio", "SONIOX_UPSAMPLE_AUDIO", False))
+        self._soniox_audio_buffer = b''  # Buffer for audio conversion
 
         self.soniox_ws = None
         self.soniox_task = None
@@ -227,26 +246,139 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
 
     # ---------------------- codec helpers ----------------------
     def choose_codec(self, sdp):
-        """Returns the preferred codec from a list"""
+        """Returns the preferred codec from a list - prefers Opus (48kHz) for better quality"""
         codecs = get_codecs(sdp)
-        priority = ["pcma", "pcmu"]
+        # Prefer Opus first (48kHz high quality), then G.711
+        priority = ["opus", "pcma", "pcmu"]
         cmap = {c.name.lower(): c for c in codecs}
-        for codec in priority:
-            if codec in cmap:
-                return CODECS[codec](cmap[codec])
+        for codec_name in priority:
+            if codec_name in cmap:
+                codec = CODECS[codec_name](cmap[codec_name])
+                # For Opus, prefer 48kHz sample rate
+                if codec_name == "opus" and codec.sample_rate == 48000:
+                    logging.info("FLOW codec: Selected Opus at 48kHz (high quality)")
+                    return codec
+                elif codec_name == "opus":
+                    logging.info("FLOW codec: Selected Opus at %dHz", codec.sample_rate)
+                    return codec
+                else:
+                    logging.info("FLOW codec: Selected %s at %dHz", codec_name, codec.sample_rate)
+                    return codec
         raise UnsupportedCodec("No supported codec found")
 
     def get_audio_format(self):
-        """Returns the corresponding audio format string used by your existing code"""
+        """Returns the corresponding audio format string for OpenAI Realtime API.
+        OpenAI only supports G.711, so we always return G.711 format even if we use Opus for Soniox."""
+        # OpenAI Realtime API only supports G.711 (g711_ulaw or g711_alaw)
+        # Even if we use Opus for better Soniox quality, OpenAI needs G.711
+        if self.codec_name == "opus":
+            # If Opus is selected, we'll need to convert to G.711 for OpenAI
+            # Default to ulaw for compatibility
+            return "g711_ulaw"
         return self.codec_name
 
     def _soniox_audio_format(self):
-        """Map RTP codec to Soniox raw input config."""
+        """Map RTP codec to Soniox raw input config. Prefers PCM at 16kHz for better quality."""
+        # If we have Opus at 48kHz, use it directly
+        if self.codec.name == "opus" and self.codec.sample_rate == 48000:
+            return ("pcm_s16le", 48000, 1)
+        # For G.711, we'll convert to PCM and upsample to 16kHz
+        # Soniox will receive PCM at 16kHz instead of G.711 at 8kHz
+        if self.soniox_upsample:
+            return ("pcm_s16le", 16000, 1)
+        # Fallback: use original format
         if self.codec_name == "g711_ulaw":
             return ("mulaw", 8000, 1)
         if self.codec_name == "g711_alaw":
             return ("alaw", 8000, 1)
         return ("pcm_s16le", 16000, 1)
+    
+    def _convert_g711_to_pcm16(self, audio_data, is_ulaw=True):
+        """Convert G.711 (μ-law or A-law) to 16-bit PCM."""
+        try:
+            if is_ulaw:
+                # Convert μ-law to linear PCM
+                pcm = audioop.ulaw2lin(audio_data, 2)  # 2 bytes per sample (16-bit)
+            else:
+                # Convert A-law to linear PCM
+                pcm = audioop.alaw2lin(audio_data, 2)  # 2 bytes per sample (16-bit)
+            return pcm
+        except Exception as e:
+            logging.error("FLOW audio: G.711 conversion error: %s", e)
+            return audio_data
+    
+    def _upsample_audio(self, pcm_data, from_rate=8000, to_rate=16000):
+        """Upsample PCM audio from one sample rate to another using linear interpolation."""
+        if from_rate == to_rate:
+            return pcm_data
+        
+        if not HAS_NUMPY:
+            # Simple linear interpolation without numpy
+            # Convert bytes to samples (16-bit = 2 bytes per sample)
+            num_samples = len(pcm_data) // 2
+            ratio = to_rate / from_rate
+            new_num_samples = int(num_samples * ratio)
+            
+            # Convert to list of samples
+            samples = []
+            for i in range(num_samples):
+                idx = i * 2
+                sample = int.from_bytes(pcm_data[idx:idx+2], byteorder='little', signed=True)
+                samples.append(sample)
+            
+            # Linear interpolation
+            new_samples = []
+            for i in range(new_num_samples):
+                pos = i / ratio
+                idx = int(pos)
+                frac = pos - idx
+                
+                if idx >= num_samples - 1:
+                    new_samples.append(samples[-1])
+                else:
+                    # Linear interpolation
+                    sample = int(samples[idx] * (1 - frac) + samples[idx + 1] * frac)
+                    new_samples.append(sample)
+            
+            # Convert back to bytes
+            result = b''.join(s.to_bytes(2, byteorder='little', signed=True) for s in new_samples)
+            return result
+        else:
+            # Use numpy for better quality resampling
+            # Convert bytes to numpy array
+            samples = np.frombuffer(pcm_data, dtype=np.int16)
+            # Linear interpolation
+            num_samples = len(samples)
+            ratio = to_rate / from_rate
+            new_num_samples = int(num_samples * ratio)
+            
+            # Create indices for interpolation
+            indices = np.linspace(0, num_samples - 1, new_num_samples)
+            # Linear interpolation
+            new_samples = np.interp(indices, np.arange(num_samples), samples)
+            # Convert back to int16 and then to bytes
+            new_samples = new_samples.astype(np.int16)
+            return new_samples.tobytes()
+    
+    def _process_audio_for_soniox(self, audio_data):
+        """Process audio for Soniox: convert G.711 to PCM and upsample if needed."""
+        if not self.soniox_upsample:
+            return audio_data
+        
+        # If we're using Opus, audio is already high quality
+        if self.codec.name == "opus":
+            # Opus audio might need conversion depending on format
+            # For now, assume it's already in good format
+            return audio_data
+        
+        # Convert G.711 to PCM
+        is_ulaw = (self.codec_name == "g711_ulaw")
+        pcm_8k = self._convert_g711_to_pcm16(audio_data, is_ulaw)
+        
+        # Upsample from 8kHz to 16kHz
+        pcm_16k = self._upsample_audio(pcm_8k, from_rate=8000, to_rate=16000)
+        
+        return pcm_16k
 
     # ---------------------- order checking helpers ----------------------
     async def _check_undelivered_order(self, phone_number):
@@ -520,11 +652,27 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 "2) اگر کاربر درخواست کرد پیشنهادات ویژه رستوران را با get_menu_specials بگیر و بگو "
                 "3) سفارش غذای اصلی را بگیر، اگر عین آن غذا موجود نبود شبیه‌ترین را با search_menu_item بیاب و پیشنهاد بده "
                 "4) آدرس تحویل را بگیر (شماره تلفن به صورت خودکار از تماس گرفته می‌شود و نیازی به پرسیدن آن نیست)"
-                "5) خیلی مهم: وقتی کاربر چند غذا را در یک جمله می‌گوید، حتما همه را یادداشت کن و هیچ کدام را از قلم نینداز. "
-                "6) قبل از ثبت سفارش، همه غذاهایی که کاربر گفته را برایش تکرار کن تا مطمئن شوی همه را درست فهمیده‌ای. "
-                "7) همه موارد سفارش را تایید کن و با create_order ثبت کن. "
-                "8) خیلی مهم: فقط یک بار create_order را صدا بزن برای هر سفارش. هیچ وقت برای یک سفارش چند بار create_order را صدا نزن. "
-                "9) بعد از ثبت سفارش، اگر پیام موفقیت آمیز بود، سفارش ثبت شده است و نیازی به ثبت دوباره نیست. "
+                "5) خیلی خیلی مهم: وقتی کاربر چند غذا را در یک جمله می‌گوید، حتما همه را با تعداد دقیق یادداشت کن و هیچ کدام را از قلم نینداز. "
+                "   - اگر کاربر گفت 'یک کباب کوبیده و دو دوغ' باید ثبت کنی: [{item_name: 'کباب کوبیده', quantity: 1}, {item_name: 'دوغ', quantity: 2}] "
+                "   - اگر کاربر گفت 'دو کباب و سه تا نوشابه' باید ثبت کنی: [{item_name: 'کباب', quantity: 2}, {item_name: 'نوشابه', quantity: 3}] "
+                "   - اگر کاربر گفت 'سه تا کباب و دو دوغ' باید ثبت کنی: [{item_name: 'کباب', quantity: 3}, {item_name: 'دوغ', quantity: 2}] "
+                "   - هیچ وقت نباید هیچ غذایی یا تعدادش را از قلم بیندازی. همه چیزهایی که کاربر گفت با تعداد دقیق باید در لیست items باشد. "
+                "   - اگر کاربر تعداد نگفت، به صورت پیش‌فرض quantity: 1 بگذار، اما اگر گفت 'دو' یا 'سه تا' یا 'چهار' حتما همان تعداد را ثبت کن. "
+                "6) قبل از ثبت سفارش، حتما همه غذاهایی که کاربر گفته را با تعداد دقیق برایش تکرار کن تا مطمئن شوی همه را درست فهمیده‌ای. "
+                "   - لیست کامل با تعداد را بگو: 'پس سفارش شما: [مثلا: دو کباب کوبیده، سه دوغ، یک نوشابه] درست است؟' "
+                "   - حتما تعداد هر غذا را هم بگو: 'دو تا کباب، سه تا دوغ' نه فقط 'کباب و دوغ' "
+                "   - اگر کاربر تایید کرد، فقط در این صورت create_order را صدا بزن "
+                "7) خیلی مهم: قبل از صدا زدن create_order، مطمئن شو که: "
+                "   - لیست items خالی نیست (حتما حداقل یک غذا باید باشد) "
+                "   - customer_name وجود دارد "
+                "   - address وجود دارد "
+                "   - همه غذاهایی که کاربر گفت در لیست items هستند "
+                "   - تعداد هر غذا (quantity) دقیقا همان است که کاربر گفت (اگر گفت 'دو' باید quantity: 2 باشد، اگر گفت 'سه تا' باید quantity: 3 باشد) "
+                "8) اگر لیست items خالی است یا customer_name یا address نداریم، هیچ وقت create_order را صدا نزن. "
+                "   در عوض از کاربر بپرس که اطلاعات گم شده را بدهد. "
+                "9) همه موارد سفارش را تایید کن و با create_order ثبت کن. "
+                "10) خیلی مهم: فقط یک بار create_order را صدا بزن برای هر سفارش. هیچ وقت برای یک سفارش چند بار create_order را صدا نزن. "
+                "11) بعد از ثبت سفارش، اگر پیام موفقیت آمیز بود، سفارش ثبت شده است و نیازی به ثبت دوباره نیست. "
             )
         
         return base_instructions + " " + scenario_instructions
@@ -641,23 +789,23 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 {
                     "type": "function",
                     "name": "create_order",
-                    "description": "ثبت سفارش نهایی در سیستم. باید همه اطلاعات مشتری و لیست غذاها کامل باشد. شماره تلفن به صورت خودکار از تماس گرفته می‌شود.",
+                    "description": "ثبت سفارش نهایی در سیستم. خیلی مهم: قبل از صدا زدن این تابع، مطمئن شو که: 1) customer_name وجود دارد و خالی نیست، 2) address وجود دارد و خالی نیست، 3) items لیست خالی نیست و حداقل یک غذا دارد، 4) همه غذاهایی که کاربر گفت در لیست items هستند. شماره تلفن به صورت خودکار از تماس گرفته می‌شود.",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "customer_name": {"type": "string", "description": "نام مشتری"},
+                            "customer_name": {"type": "string", "description": "نام مشتری (الزامی - نباید خالی باشد)"},
                             "phone_number": {"type": "string", "description": "شماره تلفن مشتری (اختیاری - به صورت خودکار از تماس گرفته می‌شود)"},
-                            "address": {"type": "string", "description": "آدرس تحویل سفارش"},
+                            "address": {"type": "string", "description": "آدرس تحویل سفارش (الزامی - نباید خالی باشد)"},
                             "items": {
                                 "type": "array",
-                                "description": "لیست آیتم‌های سفارش شامل نام غذا و تعداد",
+                                "description": "لیست آیتم‌های سفارش شامل نام غذا و تعداد (الزامی - نباید خالی باشد، باید حداقل یک غذا داشته باشد). خیلی مهم: 1) همه غذاهایی که کاربر گفت باید در این لیست باشند، 2) تعداد (quantity) هر غذا باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد).",
                                 "items": {
                                     "type": "object",
                                     "properties": {
                                         "item_name": {"type": "string", "description": "نام دقیق غذا از منو"},
-                                        "quantity": {"type": "integer", "description": "تعداد", "minimum": 1, "default": 1}
+                                        "quantity": {"type": "integer", "description": "تعداد دقیق غذا - باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد). اگر کاربر تعداد نگفت، مقدار پیش‌فرض 1 است.", "minimum": 1, "default": 1}
                                     },
-                                    "required": ["item_name"],
+                                    "required": ["item_name", "quantity"],
                                 }
                             },
                             "notes": {"type": "string", "description": "یادداشت یا توضیحات اضافی (اختیاری)", "nullable": True},
@@ -968,6 +1116,56 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     items = args.get("items", [])
                     notes = args.get("notes")
                     
+                    # CRITICAL VALIDATION: Reject order if missing required fields
+                    validation_errors = []
+                    
+                    # Check customer name
+                    if not customer_name or not customer_name.strip():
+                        validation_errors.append("نام مشتری")
+                    
+                    # Check address
+                    if not address or not address.strip():
+                        validation_errors.append("آدرس")
+                    
+                    # Check items - MUST NOT BE EMPTY
+                    if not items or len(items) == 0:
+                        validation_errors.append("لیست غذاها (هیچ غذایی ثبت نشده)")
+                    else:
+                        # Validate each item has required fields
+                        for idx, item in enumerate(items):
+                            item_name = item.get('item_name', '').strip()
+                            quantity = item.get('quantity', 0)
+                            if not item_name:
+                                validation_errors.append(f"نام غذا در آیتم {idx + 1}")
+                            if not quantity or quantity <= 0:
+                                validation_errors.append(f"تعداد در آیتم {idx + 1} (باید عدد مثبت باشد، مقدار فعلی: {quantity})")
+                            # Log item details for debugging
+                            logging.info("  ✅ Validating item %d: '%s' × %d", idx + 1, item_name, quantity)
+                    
+                    # If validation fails, reject the order
+                    if validation_errors:
+                        error_message = f"خطا: اطلاعات ناقص است. لطفا موارد زیر را تکمیل کنید: {', '.join(validation_errors)}"
+                        logging.error("❌ ORDER VALIDATION FAILED: %s", ', '.join(validation_errors))
+                        logging.error("   Customer: %s", customer_name)
+                        logging.error("   Address: %s", address)
+                        logging.error("   Items count: %d", len(items) if items else 0)
+                        
+                        output = {
+                            "success": False,
+                            "message": error_message,
+                            "missing_fields": validation_errors
+                        }
+                        await self.ws.send(json.dumps({
+                            "type": "conversation.item.create",
+                            "item": {"type": "function_call_output", "call_id": call_id,
+                                     "output": json.dumps(output, ensure_ascii=False)}
+                        }))
+                        await self.ws.send(json.dumps({
+                            "type": "response.create",
+                            "response": {"modalities": ["text", "audio"]}
+                        }))
+                        continue
+                    
                     # Normalize phone number
                     normalized_phone = normalize_phone_number(phone_number)
                     
@@ -1239,11 +1437,20 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             logging.debug("FLOW media: drop audio (call terminated)")
             return
 
-        # Send to Soniox (raw mulaw/alaw/pcm)
+        # Process audio for Soniox: convert G.711 to PCM and upsample for better quality
+        processed_audio = self._process_audio_for_soniox(audio)
+        
+        # Send to Soniox (PCM at 16kHz for better recognition)
         try:
             if self.soniox_ws:
-                await self.soniox_ws.send(audio)
-                logging.debug("FLOW media: sent %d bytes → Soniox", len(audio))
+                # Check if WebSocket is still open before sending
+                if self.soniox_ws.closed:
+                    logging.warning("FLOW media: Soniox WS is closed, cannot send audio")
+                    self.soniox_ws = None
+                else:
+                    await self.soniox_ws.send(processed_audio)
+                    logging.debug("FLOW media: sent %d bytes → Soniox (processed from %d bytes)", 
+                                 len(processed_audio), len(audio))
             elif self._fallback_whisper_enabled and self.ws:
                 # if in fallback mode, audio must also go to OpenAI's input buffer
                 await self.ws.send(json.dumps({
@@ -1254,8 +1461,21 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 logging.debug("FLOW media: Soniox WS not ready yet")
         except ConnectionClosedError as e:
             logging.error("FLOW media: Soniox WS closed while sending audio: %s", e)
+            self.soniox_ws = None
+            # Try to enable fallback if Soniox fails
+            if not self._fallback_whisper_enabled:
+                logging.warning("FLOW media: Soniox connection lost, enabling Whisper fallback")
+                await self._enable_whisper_fallback()
         except Exception as e:
+            error_str = str(e)
             logging.error("FLOW media: error sending audio to Soniox: %s", e)
+            # If it's a WebSocket error (connection closed), mark connection as closed
+            if "1000" in error_str or "closed" in error_str.lower() or "ConnectionClosed" in str(type(e)):
+                logging.warning("FLOW media: Soniox WS connection error detected, marking as closed")
+                self.soniox_ws = None
+                if not self._fallback_whisper_enabled:
+                    logging.warning("FLOW media: Enabling Whisper fallback due to Soniox connection error")
+                    await self._enable_whisper_fallback()
 
         # (Optional) also forward to OpenAI input even when Soniox is on (generally not needed)
         if self.forward_audio_to_openai and self.ws:
