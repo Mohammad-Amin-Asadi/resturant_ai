@@ -52,6 +52,18 @@
                                     <div class="phone">{{ customer.phone_number }}</div>
                                 </div>
                             </div>
+                            <button class="delete-customer-btn" 
+                                    data-customer-id="{{ customer.id }}"
+                                    data-customer-name="{{ customer.name|escapejs }}"
+                                    data-customer-phone="{{ customer.phone_number|escapejs }}"
+                                    title="حذف مشتری">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" 
+                                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <line x1="10" y1="11" x2="10" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                    <line x1="14" y1="11" x2="14" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                </svg>
+                            </button>
                         </div>
                     </div>
                     <div class="rows">
@@ -121,8 +133,90 @@
     </div>
     
     <script>
+        // Delete customer function
+        function deleteCustomer(customerId, customerName, customerPhone) {
+            if (!confirm(`آیا مطمئن هستید که می‌خواهید مشتری "${customerName}" (${customerPhone}) را حذف کنید؟\n\nاین عمل غیرقابل بازگشت است.`)) {
+                return;
+            }
+            
+            // Get CSRF token
+            const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+                             getCookie('csrftoken');
+            
+            // Send DELETE request
+            fetch(`/api/customers/${customerId}/delete/`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'same-origin'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    alert(data.message);
+                    // Reload the page to show updated list
+                    window.location.reload();
+                } else if (data.error) {
+                    alert('خطا: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('خطا در حذف مشتری. لطفا دوباره تلاش کنید.');
+            });
+        }
+        
+        // Helper function to get CSRF token from cookies
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+        
         // Debug: Log all order ID links on page load and ensure they're clickable
         document.addEventListener('DOMContentLoaded', function() {
+            // Ensure delete buttons are clickable
+            const deleteButtons = document.querySelectorAll('.delete-customer-btn');
+            console.log('🗑️ Delete buttons found:', deleteButtons.length);
+            deleteButtons.forEach((btn, index) => {
+                console.log(`  Delete button ${index + 1}:`, {
+                    onclick: btn.getAttribute('onclick'),
+                    computedStyle: window.getComputedStyle(btn).pointerEvents,
+                    zIndex: window.getComputedStyle(btn).zIndex
+                });
+                
+                // Force ensure button is clickable
+                btn.style.pointerEvents = 'auto';
+                btn.style.cursor = 'pointer';
+                btn.style.zIndex = '100';
+                btn.style.position = 'relative';
+                
+                // Add click event listener
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation(); // Prevent event bubbling
+                    const customerId = this.getAttribute('data-customer-id');
+                    const customerName = this.getAttribute('data-customer-name');
+                    const customerPhone = this.getAttribute('data-customer-phone');
+                    console.log('✅ Delete button clicked!', {
+                        customerId: customerId,
+                        customerName: customerName,
+                        customerPhone: customerPhone
+                    });
+                    deleteCustomer(parseInt(customerId), customerName, customerPhone);
+                }, true);
+            });
+            
             const orderLinks = document.querySelectorAll('.order-id-badge');
             console.log('🔗 Order ID links found:', orderLinks.length);
             orderLinks.forEach((link, index) => {

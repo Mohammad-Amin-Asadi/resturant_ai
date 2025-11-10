@@ -105,6 +105,11 @@ class API:
             'ته چین مرغ': 'تَه‌چین مرغ',
             'ته‌چین مرغ': 'تَه‌چین مرغ',
             'ته چین': 'تَه‌چین مرغ',  # اگر فقط "ته چین" بگوید، مرغ باشد
+            
+            # کباب کوبیده → کَباب کُوبیده (با اعراب)
+            'کباب کوبیده': 'کَباب کُوبیده',
+            'کوبیده': 'کَباب کُوبیده',
+            'پرس کوبیده': 'کَباب کُوبیده',
         }
     
     async def track_order(self, phone_number: str) -> dict:
@@ -119,9 +124,29 @@ class API:
                 params={"phone_number": normalized_phone},
                 timeout=10
             )
+            
+            # Handle 404 as "no orders" (not an error)
+            if response.status_code == 404:
+                logging.info("📭 No orders found (404) - customer has no orders")
+                return {"success": True, "orders": []}
+            
             response.raise_for_status()
             data = response.json()
+            
+            # Handle empty list response
+            if isinstance(data, list) and len(data) == 0:
+                logging.info("📭 No orders found (empty list)")
+                return {"success": True, "orders": []}
+            
             return {"success": True, "orders": data}
+        except requests.exceptions.HTTPError as e:
+            # Only log as error if it's not a 404 (already handled above)
+            if hasattr(e, 'response') and e.response and e.response.status_code == 404:
+                logging.info("📭 No orders found (404) - customer has no orders")
+                return {"success": True, "orders": []}
+            else:
+                logging.error(f"Error tracking order: {e}")
+                return {"success": False, "message": str(e)}
         except requests.exceptions.RequestException as e:
             logging.error(f"Error tracking order: {e}")
             return {"success": False, "message": str(e)}
@@ -327,6 +352,10 @@ class API:
         
         return 0.0
     
+    def _create_auto_alias(self, item_name_with_diacritics: str) -> str:
+        """Create alias without diacritics for an item name with diacritics"""
+        return self._remove_diacritics(item_name_with_diacritics)
+    
     async def search_menu_item(self, item_name: str, category: str = None) -> dict:
         """Search for menu item by name (diacritic-insensitive)"""
         try:
@@ -351,17 +380,37 @@ class API:
                 item_name_db = item['name']
                 item_name_normalized = self._normalize_for_search(item_name_db)
                 
+                # Quick check: if normalized versions match exactly, it's a perfect match
+                if search_normalized == item_name_normalized:
+                    matches.append((item, 1.0))
+                    logging.info("  ✅ Exact match (after normalization): '%s' (normalized: '%s')", 
+                                item_name_db, item_name_normalized)
+                    continue
+                
+                # Create auto-alias: if item has diacritics, also try matching without diacritics
+                item_name_without_diacritics = self._remove_diacritics(item_name_db)
+                
                 # Calculate similarity score using the primary (aliased) search term
                 similarity = self._calculate_similarity(primary_search_term, item_name_db)
+                
+                # Also try matching with item name without diacritics (auto-alias)
+                if item_name_without_diacritics != item_name_db:
+                    # If item has diacritics, also check similarity with version without diacritics
+                    similarity_no_diacritics = self._calculate_similarity(primary_search_term, item_name_without_diacritics)
+                    similarity = max(similarity, similarity_no_diacritics)
                 
                 # Also check similarity with original term (in case alias didn't match but original does)
                 if len(search_terms) > 1:
                     original_similarity = self._calculate_similarity(item_name, item_name_db)
+                    # Also try original with item without diacritics
+                    if item_name_without_diacritics != item_name_db:
+                        original_similarity_no_diacritics = self._calculate_similarity(item_name, item_name_without_diacritics)
+                        original_similarity = max(original_similarity, original_similarity_no_diacritics)
                     # Use the higher similarity score
                     similarity = max(similarity, original_similarity * 0.9)  # Slight penalty for non-aliased match
                 
                 # Only include matches with meaningful similarity
-                if similarity > 0.4:  # Threshold to filter out weak matches
+                if similarity > 0.3:  # Lowered threshold from 0.4 to 0.3 for better matching
                     matches.append((item, similarity))
                     logging.info("  ✅ Match found: '%s' (normalized: '%s', similarity: %.2f)", 
                                 item_name_db, item_name_normalized, similarity)

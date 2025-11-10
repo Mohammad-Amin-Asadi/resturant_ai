@@ -1,12 +1,5 @@
 #!/usr/bin/env python
-"""
-OpenAI Realtime + Soniox RT (Persian) bridge
-- Streams inbound RTP (G.711 μ-law/A-law) -> Soniox for STT
-- Sends finalized Persian text to OpenAI Realtime
-- Streams OpenAI TTS audio back (G.711) into RTP queue
-- Step-by-step FLOW logs so you can see the full path
-- ONLY Soniox is used for STT - no Whisper fallback
-"""
+"""OpenAI Realtime + Soniox RT bridge for Persian STT."""
 
 import sys
 import json
@@ -15,35 +8,33 @@ import base64
 import logging
 import asyncio
 import contextlib
+import os
+import re
+import audioop
 from queue import Empty
+from datetime import datetime, timedelta
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 from ai import AIEngine
 from codec import get_codecs, CODECS, UnsupportedCodec
 from config import Config
 from storage import WalletMeetingDB
-from datetime import datetime, timedelta
+from api_sender import API
+from phone_normalizer import normalize_phone_number
+from did_config import load_did_config
+
 try:
     from zoneinfo import ZoneInfo
 except Exception:
     ZoneInfo = None
-import re
-from api_sender import API
-from phone_normalizer import normalize_phone_number
-from did_config import load_did_config, get_did_config_loader
-import os
-import audioop
 try:
     import numpy as np
     HAS_NUMPY = True
 except ImportError:
     HAS_NUMPY = False
 
-# دریافت آدرس سرور از environment variable
 BACKEND_SERVER_URL = os.getenv("BACKEND_SERVER_URL", "http://localhost:8000")
-# API instance will be created per-call with DID-specific backend URL if needed
 
-# ---- Ensure logs appear in the engine container ----
 logging.basicConfig(
     level=logging.INFO,
     stream=sys.stdout,
@@ -54,46 +45,37 @@ OPENAI_API_MODEL = "gpt-realtime-2025-08-28"
 OPENAI_URL_FORMAT = "wss://api.openai.com/v1/realtime?model={}"
 
 
-class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
-    """OpenAI Realtime client that uses Soniox for STT."""
+class OpenAI(AIEngine):
+    """OpenAI Realtime client using Soniox for STT."""
 
     def __init__(self, call, cfg):
-        # === media & IO ===
         self.codec = self.choose_codec(call.sdp)
         self.queue = call.rtp
         self.call = call
         self.ws = None
         self.session = None
 
-        # === Load DID-specific configuration ===
         did_number = getattr(call, 'did_number', None)
         did_config = {}
+        
         if did_number:
-            logging.info("🔧 Loading DID-specific config for: %s", did_number)
             did_config = load_did_config(did_number)
             if did_config:
-                logging.info("✅ DID config loaded: %s", list(did_config.keys()))
+                logging.info("DID config loaded: %s", did_config.get('restaurant_name', 'Unknown'))
             else:
-                logging.warning("⚠️  No DID config found for %s, using defaults", did_number)
+                logging.warning("No DID config for %s, using default", did_number)
         else:
-            logging.info("ℹ️  No DID number available, using default config")
+            logging.warning("No DID number available, using default config")
 
-        # === config ===
-        # Merge DID config with base config (DID config takes precedence)
         base_cfg = Config.get("openai", cfg)
-        
-        # Create merged config: base config + DID-specific overrides
         merged_cfg_dict = dict(base_cfg)
         if did_config:
-            # Merge DID config into base config (DID values override base)
             if 'openai' in did_config:
                 merged_cfg_dict.update(did_config['openai'])
-            # Also merge top-level keys that might be OpenAI-specific
             for key in ['model', 'voice', 'temperature', 'welcome_message', 'intro']:
                 if key in did_config:
                     merged_cfg_dict[key] = did_config[key]
         
-        # Create a ConfigSection-like object for merged config
         class MergedConfigSection:
             def __init__(self, base_section, did_overrides):
                 self._base = base_section
@@ -129,16 +111,12 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 return fallback
         
         self.cfg = MergedConfigSection(base_cfg, merged_cfg_dict)
-        
-        # Store DID config for later use
         self.did_config = did_config
         self.did_number = did_number
         
-        # === Backend API URL (can be DID-specific) ===
         backend_url = BACKEND_SERVER_URL
         if did_config and 'backend_url' in did_config:
             backend_url = did_config['backend_url']
-            logging.info("🔗 Using DID-specific backend URL: %s", backend_url)
         self.api = API(backend_url)
         db_path = self.cfg.get("db_path", "OPENAI_DB_PATH", "./src/data/app.db")
         self.db = WalletMeetingDB(db_path)
@@ -148,34 +126,25 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         self.url = self.cfg.get("url", "OPENAI_URL", OPENAI_URL_FORMAT.format(self.model))
         self.key = self.cfg.get(["key", "openai_key"], "OPENAI_API_KEY")
         self.voice = self.cfg.get(["voice", "openai_voice"], "OPENAI_VOICE", "alloy")
-
-        # NOTE: Instructions are now DYNAMIC and built per call based on order status
-        # See _build_customized_instructions() method which creates scenario-specific instructions
-        # Static instructions removed - each call gets customized instructions in start() method
-        # Fixed: use correct parameter order (option, env, fallback)
-        self.intro = self.cfg.get("welcome_message", "OPENAI_WELCOME_MESSAGE", ". سلام و درود بر شما،با رستوران بزرگمهر تماس گرفته اید . درخدمتم. ")
+        self.intro = self.cfg.get("welcome_message", "OPENAI_WELCOME_MESSAGE", ". سلام و درودبرشما،با رستوران بزرگمهر تماس گرفته اید . لطفا سفارشتون رو بفرمایید تا ثبت کنم. ")
         self.transfer_to = self.cfg.get("transfer_to", "OPENAI_TRANSFER_TO", None)
         self.transfer_by = self.cfg.get("transfer_by", "OPENAI_TRANSFER_BY", self.call.to)
 
-        # state for tools
-        self.temp_order_data = {}  # Temporary storage for order being placed
-        self.user_mentioned_items = []  # Track items user mentioned during conversation for verification
-        self.customer_name_from_history = None  # Customer name from previous orders
-        self.recent_order_ids = set()  # Track recently created orders to prevent duplicates
-        self.last_order_time = None  # Track when last order was created
+        self.temp_order_data = {}
+        self.user_mentioned_items = []
+        self.customer_name_from_history = None
+        self.recent_order_ids = set()
+        self.last_order_time = None
 
-        # === codec mapping ===
         if self.codec.name == "mulaw":
             self.codec_name = "g711_ulaw"
         elif self.codec.name == "alaw":
             self.codec_name = "g711_alaw"
         elif self.codec.name == "opus":
-            self.codec_name = "opus"  # Opus codec for high quality
+            self.codec_name = "opus"
         else:
             self.codec_name = "g711_ulaw"
 
-        # === Soniox config & state ===
-        # Merge DID config for Soniox as well
         base_soniox_cfg = Config.get("soniox", cfg)
         soniox_overrides = {}
         if did_config and 'soniox' in did_config:
@@ -206,55 +175,47 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         
         self.soniox_cfg = MergedSonioxConfig(base_soniox_cfg, soniox_overrides)
         self.soniox_enabled = bool(self.soniox_cfg.get("enabled", "SONIOX_ENABLED", True))
-        # دریافت کلید از config یا environment variable
         self.soniox_key = self.soniox_cfg.get("key", "SONIOX_API_KEY")
         self.soniox_url = self.soniox_cfg.get("url", "SONIOX_URL", "wss://stt-rt.soniox.com/transcribe-websocket")
-        # Use better model for Persian recognition
         self.soniox_model = self.soniox_cfg.get("model", "SONIOX_MODEL", "stt-rt-preview")
-        # Enhanced language hints for better Persian recognition
-        # Soniox only accepts 'fa', not 'fa-IR'
         self.soniox_lang_hints = self.soniox_cfg.get("language_hints", "SONIOX_LANGUAGE_HINTS", ["fa"])
-        # Disable diarization for better accuracy (single speaker)
         self.soniox_enable_diar = bool(self.soniox_cfg.get("enable_speaker_diarization", "SONIOX_ENABLE_DIARIZATION", False))
-        # Enable LID for better language detection
-        self.soniox_enable_lid = bool(self.soniox_cfg.get("enable_language_identification", "SONIOX_ENABLE_LID", True))
-        # Enable endpoint detection for better sentence boundaries
+        self.soniox_enable_lid = bool(self.soniox_cfg.get("enable_language_identification", "SONIOX_ENABLE_LID", False))
         self.soniox_enable_epd = bool(self.soniox_cfg.get("enable_endpoint_detection", "SONIOX_ENABLE_ENDPOINT", True))
         self.soniox_keepalive_sec = int(self.soniox_cfg.get("keepalive_sec", "SONIOX_KEEPALIVE_SEC", 15))
-        
-        # Audio quality enhancement: convert G.711 to PCM and upsample for Soniox
-        # Enabled by default for better accuracy - converts 8kHz G.711 to 16kHz PCM
         self.soniox_upsample = bool(self.soniox_cfg.get("upsample_audio", "SONIOX_UPSAMPLE_AUDIO", True))
         
-        # Context phrases for better Persian recognition (common menu items and words)
-        self.soniox_context_phrases = [
-            "کباب", "کوبیده", "جوجه", "مرغ", "ته چین", "ته‌چین", "نوشابه", "کوکا", "فانتا", "خانواده",
+        default_context_phrases = [
+            "کباب", "پرس کوبیده","کوبیده", "جوجه", "مرغ", "ته چین", "ته‌چین", "نوشابه", "کوکا", "فانتا", "خانواده",
             "دوغ", "عالیس", "قوطی", "شیشه", "بطری", "قیمه", "خورش", "چلو", "برگ", "سلطانی",
-            "شیشلیک", "ترش", "گیلانی", "تبریزی", "اردبیلی", "مصری", "بره", "میگو", "ماهی",
+            "شیشلیک", "ششلیک", "چلو ششلیک", "چلو شیشلیک", "کباب شیشلیک", "کباب ششلیک", 
+            "پرس ششلیک", "پرس شیشلیک", "یه پرس ششلیک", "یک پرس ششلیک",
+            "ترش", "گیلانی", "تبریزی", "اردبیلی", "مصری", "بره", "میگو", "ماهی",
             "پیتزا", "همبرگر", "چیزبرگر", "سیب زمینی", "پاستا", "سالاد", "سزار", "ماست",
             "نیمرو", "املت", "تخم مرغ", "سوسیس", "هات داگ", "کره", "پنیر", "مربا",
             "یک", "دو", "سه", "چهار", "پنج", "کوچک", "بزرگ", "خانواده", "مخصوص",
-            "بدون", "گوجه", "خیارشور", "پیاز", "برشته", "خوب"
+            "بدون", "گوجه", "خیارشور", "پیاز", "برشته", "خوب", "پرس"
         ]
-        self._soniox_audio_buffer = b''  # Buffer for audio conversion
-
+        
+        if self.did_config:
+            custom_context = self.did_config.get('custom_context', {})
+            menu_items = custom_context.get('menu_items', [])
+            if menu_items:
+                self.soniox_context_phrases = list(set(menu_items + default_context_phrases))
+            else:
+                self.soniox_context_phrases = default_context_phrases
+        else:
+            self.soniox_context_phrases = default_context_phrases
+        
+        self._soniox_audio_buffer = b''
         self.soniox_ws = None
         self.soniox_task = None
         self.soniox_keepalive_task = None
         self._soniox_accum = []
-        self._soniox_flush_timer = None  # Timer for delayed flush after silence
-        self.soniox_silence_duration_ms = int(self.soniox_cfg.get("silence_duration_ms", "SONIOX_SILENCE_DURATION_MS", 500))  # 1.2 seconds
-        self._order_confirmed = False  # Track if final order confirmation has been done
-
-        # Optional: also forward mic audio to OpenAI (usually unnecessary)
-        self.forward_audio_to_openai = bool(
-            self.soniox_cfg.get("forward_audio_to_openai", "FORWARD_AUDIO_TO_OPENAI", False)
-        )
-
-        # Soniox is the ONLY STT engine - no fallback to Whisper
-        # If Soniox fails, the system will log errors but not use Whisper
-
-    # ---------------------- date/time helpers (unchanged) ----------------------
+        self._soniox_flush_timer = None
+        self.soniox_silence_duration_ms = int(self.soniox_cfg.get("silence_duration_ms", "SONIOX_SILENCE_DURATION_MS", 500))
+        self._order_confirmed = False
+        self.forward_audio_to_openai = bool(self.soniox_cfg.get("forward_audio_to_openai", "FORWARD_AUDIO_TO_OPENAI", False))
     def _to_ascii_digits(self, s: str) -> str:
         if not isinstance(s, str):
             return s
@@ -499,79 +460,45 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
 
     # ---------------------- order checking helpers ----------------------
     async def _check_undelivered_order(self, phone_number):
-        """
-        Check if caller has any undelivered orders.
-        Returns: (has_undelivered, orders_list) tuple
-        - orders_list: List of ALL undelivered orders (not just the latest)
-        - Also extracts customer name from Customer table (not just orders) for use in welcome message
-        """
         if not phone_number:
-            logging.warning("⚠️  No phone number provided for order check")
             return False, []
         
         try:
-            # Normalize phone number
             normalized_phone = normalize_phone_number(phone_number)
-            logging.info("🔍 Checking orders for phone: %s (normalized: %s)", phone_number, normalized_phone)
             
-            # First, try to get customer name from Customer table (persists even after orders are deleted)
             try:
                 customer_info = await self.api.get_customer_info(normalized_phone)
                 if customer_info.get("success") and customer_info.get("customer"):
                     self.customer_name_from_history = customer_info["customer"].get("name")
-                    if self.customer_name_from_history:
-                        logging.info("  👤 Customer name from Customer table: %s", self.customer_name_from_history)
-            except Exception as e:
-                logging.debug("  Could not get customer info from Customer table: %s", e)
+            except Exception:
+                pass
             
-            # Track orders
             result = await self.api.track_order(normalized_phone)
-            
             if not result or not result.get("success"):
-                logging.warning("⚠️  Failed to check orders: %s", result.get("message", "Unknown error"))
                 return False, []
             
             orders = result.get("orders", [])
             if not orders:
-                logging.info("📭 No orders found for phone: %s", normalized_phone)
-                # Customer name already set from Customer table above
                 return False, []
             
-            # Filter out delivered and cancelled orders
             undelivered = [o for o in orders if o.get("status") not in ["delivered", "cancelled"]]
             
             if undelivered:
-                # If we don't have customer name from Customer table, get it from order
                 if not self.customer_name_from_history:
-                    latest_order = undelivered[0]
-                    self.customer_name_from_history = latest_order.get('customer_name')
-                logging.info("✅ Found %d undelivered order(s):", len(undelivered))
-                for order in undelivered:
-                    logging.info("  - Order ID=%s, Status=%s", order.get('id'), order.get('status_display'))
-                if self.customer_name_from_history:
-                    logging.info("  👤 Customer name: %s", self.customer_name_from_history)
+                    self.customer_name_from_history = undelivered[0].get('customer_name')
+                logging.info("Found %d undelivered order(s)", len(undelivered))
                 return True, undelivered
             else:
-                logging.info("✅ All orders are delivered or cancelled for phone: %s", normalized_phone)
-                # If we don't have customer name from Customer table, get it from latest order
                 if not self.customer_name_from_history and orders:
-                    latest_order = orders[0]
-                    self.customer_name_from_history = latest_order.get('customer_name')
-                if self.customer_name_from_history:
-                    logging.info("  👤 Customer name: %s", self.customer_name_from_history)
+                    self.customer_name_from_history = orders[0].get('customer_name')
                 return False, []
                 
         except Exception as e:
-            logging.error(f"❌ Exception checking orders: {e}", exc_info=True)
+            logging.error("Exception checking orders: %s", e, exc_info=True)
             return False, []
 
     def _format_items_list_persian(self, items):
-        """
-        Format order items list in Persian.
-        Example: [{"menu_item_name": "کباب کوبیده", "quantity": 1}, {"menu_item_name": "دوغ سنتی", "quantity": 2}]
-        Returns: "یک کباب کوبیده و دوغ سنتی کوچک"
-        """
-        if not items or len(items) == 0:
+        if not items:
             return ""
         
         persian_numbers = {
@@ -582,13 +509,11 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         formatted_items = []
         for item in items:
             quantity = item.get('quantity', 1)
-            # Try different possible field names for item name
             item_name = (item.get('menu_item_name') or 
                         (item.get('menu_item', {}).get('name') if isinstance(item.get('menu_item'), dict) else None) or
                         item.get('name', ''))
             
             if not item_name:
-                logging.warning(f"⚠️  Item name not found in order item: {item}")
                 continue
             
             if quantity == 1:
@@ -598,41 +523,23 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             else:
                 formatted_items.append(f"{quantity} {item_name}")
         
-        if len(formatted_items) == 0:
+        if not formatted_items:
             return ""
         elif len(formatted_items) == 1:
             return formatted_items[0]
         elif len(formatted_items) == 2:
             return f"{formatted_items[0]} و {formatted_items[1]}"
         else:
-            # For 3+ items: "یک X، دو Y و سه Z"
             all_except_last = "، ".join(formatted_items[:-1])
             return f"{all_except_last} و {formatted_items[-1]}"
 
     def _get_scenario_config(self, scenario_type):
-        """
-        Get scenario configuration from DID config or use defaults.
-        
-        Args:
-            scenario_type: 'has_orders' or 'new_customer'
-            
-        Returns:
-            Dictionary with scenario configuration
-        """
         if not self.did_config:
             return {}
-        
         scenarios = self.did_config.get('scenarios', {})
         return scenarios.get(scenario_type, {})
     
     def _get_function_definitions(self):
-        """
-        Get function definitions from DID config or use defaults.
-        
-        Returns:
-            List of function definition dictionaries
-        """
-        # Default function definitions
         default_functions = [
             {"type": "function", "name": "terminate_call",
              "description": "ONLY call this function when the USER explicitly says they want to end the call. "
@@ -693,17 +600,17 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                         "address": {"type": "string", "description": "آدرس تحویل سفارش (الزامی - نباید خالی باشد)"},
                         "items": {
                             "type": "array",
-                            "description": "لیست آیتم‌های سفارش شامل نام غذا و تعداد (الزامی - نباید خالی باشد، باید حداقل یک غذا داشته باشد). خیلی مهم: 1) همه غذاهایی که کاربر گفت باید در این لیست باشند، 2) تعداد (quantity) هر غذا باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد).",
+                            "description": "لیست آیتم‌های سفارش شامل نام غذا و تعداد (الزامی - نباید خالی باشد، باید حداقل یک غذا داشته باشد). خیلی مهم: 1) همه غذاهایی که کاربر گفت باید در این لیست باشند، 2) تعداد (quantity) هر غذا باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد). 3) برای کباب کوبیده: اگر کاربر گفت 'یک کوبیده' یا 'یک کباب کوبیده' یا 'یک پرس کوبیده'، quantity=1 ثبت کن. اگر گفت 'دو کوبیده' یا 'دو کباب کوبیده' یا 'دو پرس کوبیده'، quantity=2 ثبت کن. هیچ وقت از کاربر نپرس چند سیخ می‌خواهد.",
                             "items": {
                                 "type": "object",
                                 "properties": {
                                     "item_name": {"type": "string", "description": "نام دقیق غذا از منو"},
-                                    "quantity": {"type": "integer", "description": "تعداد دقیق غذا - باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد). اگر کاربر تعداد نگفت، مقدار پیش‌فرض 1 است.", "minimum": 1, "default": 1}
+                                    "quantity": {"type": "integer", "description": "تعداد دقیق غذا - باید دقیقا همان باشد که کاربر گفت (اگر گفت 'یک ته‌چین مرغ' باید quantity=1 باشد، اگر گفت 'دو کباب' باید quantity=2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد). خیلی مهم: اگر کاربر تعداد را در همان جمله اول گفت (مثلا 'یک ته‌چین مرغ میخام' یا 'یک کوبیده' یا 'یک کباب کوبیده')، از همان عدد استفاده کن و دیگر از او تعداد نپرس. برای کباب کوبیده: اگر گفت 'یک کوبیده' = quantity=1، 'دو کوبیده' = quantity=2. هیچ وقت درباره سیخ نپرس. اگر کاربر تعداد نگفت، مقدار پیش‌فرض 1 است.", "minimum": 1, "default": 1}
                                 },
                                 "required": ["item_name", "quantity"],
                             }
                         },
-                        "notes": {"type": "string", "description": "توضیحات سفارش (اختیاری) - هرگونه درخواست خاص مشتری درباره سفارش، مثلا: 'ممنون میشم اگر گوجه و خیارشور نداشته باشه ساندویچم'، 'بدون پیاز لطفا'، 'کباب را خوب برشته کنید' و غیره. اگر کاربر درخواست خاصی درباره سفارش داد، حتما در این فیلد ثبت کن.", "nullable": True},
+                        "notes": {"type": "string", "description": "اگر کاربر درخواست خاصی درباره سفارش داد، حتما در این فیلد ثبت کن.", "nullable": True},
                     },
                     "required": ["customer_name", "address", "items"],
                     "additionalProperties": False
@@ -711,118 +618,76 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             },
         ]
         
-        # If DID config has custom function definitions, use them
         if self.did_config and 'functions' in self.did_config:
             custom_functions = self.did_config['functions']
             if isinstance(custom_functions, list):
-                logging.info("🔧 Using custom function definitions from DID config (%d functions)", len(custom_functions))
                 return custom_functions
             elif isinstance(custom_functions, dict):
-                # If it's a dict, merge with defaults (override matching names)
                 function_map = {f['name']: f for f in default_functions}
                 for func in custom_functions.values():
                     if isinstance(func, dict) and 'name' in func:
                         function_map[func['name']] = func
-                logging.info("🔧 Merged custom function definitions from DID config")
                 return list(function_map.values())
         
         return default_functions
     
     def _build_welcome_message(self, has_undelivered_order, orders=None):
-        """
-        Build welcome message based on order status.
-        Always includes hello and restaurant name.
-        When orders exist, includes full order details for ALL orders.
-        Uses customer name from history if available (with 'عزیز' suffix).
-        """
-        # Get restaurant name from DID config or use default
         restaurant_name = self.did_config.get('restaurant_name', 'رستوران بزرگمهر') if self.did_config else 'رستوران بزرگمهر'
-        
-        # Get welcome message templates from DID config
         welcome_config = self._get_scenario_config('has_orders' if has_undelivered_order else 'new_customer')
         welcome_templates = welcome_config.get('welcome_templates', {})
         
-        # Use customer name from history if available
         if self.customer_name_from_history:
-            # Try custom template with name, fallback to default
             base_greeting_template = welcome_templates.get('with_customer_name', 
-                "سلام و درود بر شما {customer_name} عزیز، با {restaurant_name} تماس گرفته‌اید")
+                "سلام و درودبرشما {customer_name} عزیز، با {restaurant_name} تماس گرفته‌اید")
             base_greeting = base_greeting_template.format(
                 customer_name=self.customer_name_from_history,
                 restaurant_name=restaurant_name
             )
         else:
-            # Try custom template without name, fallback to default
             base_greeting_template = welcome_templates.get('without_customer_name',
-                "سلام و درود بر شما، با {restaurant_name} تماس گرفته‌اید")
+                "سلام و درودبرشما، با {restaurant_name} تماس گرفته‌اید")
             base_greeting = base_greeting_template.format(restaurant_name=restaurant_name)
         
-        if has_undelivered_order and orders and len(orders) > 0:
-            # Has undelivered orders - report ALL orders
+        if has_undelivered_order and orders:
             order_details_list = []
-            
             for order in orders:
-                order_id = order.get('id', '')
                 status_display = order.get('status_display', '')
                 address = order.get('address', '')
                 items = order.get('items', [])
                 order_status = order.get('status', '')
-                
-                logging.info(f"📋 Processing order ID={order_id}, items_count={len(items)}, address={bool(address)}")
-                
-                # Format items list in Persian using helper function
                 items_text = self._format_items_list_persian(items)
                 
-                # Build status text based on order status
                 if order_status == 'preparing':
                     status_text = f"{status_display} توسط رستوران است"
                 else:
                     status_text = f"{status_display} است"
                 
-                # Build order detail for this order
                 if items_text:
                     if address:
-                        order_detail = f"سفارش شما به شماره ی {order_id} که {items_text}، به مقصد {address} ثبت شده بود {status_text}"
+                        order_detail = f"سفارش شما {items_text}، به مقصد {address} ثبت شده بود {status_text}"
                     else:
-                        order_detail = f"سفارش شما به شماره ی {order_id} که {items_text} ثبت شده بود {status_text}"
+                        order_detail = f"سفارش شما {items_text} ثبت شده بود {status_text}"
                 else:
-                    # Fallback if items are not available
                     if address:
-                        order_detail = f"سفارش شما به شماره ی {order_id} به مقصد {address} ثبت شده بود {status_text}"
+                        order_detail = f"سفارش شما به مقصد {address} ثبت شده بود {status_text}"
                     else:
-                        order_detail = f"سفارش شما به شماره ی {order_id} ثبت شده بود {status_text}"
+                        order_detail = f"سفارش شما ثبت شده بود {status_text}"
                 
                 order_details_list.append(order_detail)
             
-            # Join all order details
             if len(order_details_list) == 1:
                 orders_text = order_details_list[0]
             else:
-                # For multiple orders, join with "همچنین" (also)
                 orders_text = "، ".join(order_details_list[:-1]) + f" و همچنین {order_details_list[-1]}"
             
-            # Join greeting and order details, then add closing
-            # Get closing message from config or use default
             closing_message = welcome_templates.get('closing_with_orders',
                 " از صبر و شکیبایی شما متشکریم. اگر امر دیگری هست در خدمت شما هستم.")
-            full_message = f"{base_greeting}، {orders_text}."
-            full_message += closing_message
-            
-            return full_message
+            return f"{base_greeting}، {orders_text}.{closing_message}"
         else:
-            # No undelivered orders - ask if they want to order
-            # Get new customer message from config or use default
-            new_customer_message = welcome_templates.get('new_customer_question',
-                " آیا می‌خواهید سفارش جدیدی ثبت کنید؟")
+            new_customer_message = welcome_templates.get('new_customer_question', " لطفا سفارشتون رو بفرمایید تا ثبت کنم.")
             return f"{base_greeting}.{new_customer_message}"
 
     def _build_customized_instructions(self, has_undelivered_order, orders=None):
-        """
-        Build customized instructions based on call context.
-        Different scenarios for different call situations.
-        Loads from DID config if available, otherwise uses defaults.
-        """
-        # Get base instructions from DID config or use defaults
         if self.did_config:
             base_instructions_template = self.did_config.get('instructions_base',
                 "شما دستیار هوشمند رستوران هستید. "
@@ -831,6 +696,22 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 "{name_instruction}"
                 "شماره تلفن خودکار است، نپرسید. "
                 "اگر کلمه‌ای شبیه نام غذا بود، آن را پیشنهاد دهید (مثلا: 'کووید' → 'کوبیده فرمودید؟'). "
+                "مهم: 'ششلیک' یا 'شیشلیک' یک نوع غذا است (کباب ششلیک)، نه عدد 61 (شصت و یک). "
+                "همچنین 'چلو ششلیک' یا 'چلو شیشلیک' یک غذا است، نه عدد 461. "
+                "اگر کاربر گفت 'ششلیک' یا 'شیشلیک'، منظورشان غذا است نه عدد. "
+                "اگر کاربر گفت '۴۶ گیگ'، 'چهل و شش گیگ'، 'شصت و یک'، یا '۶۱' در متن سفارش غذا، "
+                "احتمالا منظورشان 'ششلیک' یا 'چلو ششلیک' است. همیشه 'ششلیک' را به عنوان غذا در نظر بگیرید نه عدد. "
+                "خیلی مهم - استخراج تعداد: وقتی کاربر می‌گوید 'یک ته‌چین مرغ میخام' یا 'دو کباب میخوام'، تعداد را از همان جمله استخراج کن. "
+                "اگر کاربر تعداد را در همان جمله گفت، دیگر از او تعداد نپرس. "
+                "خیلی مهم - ممنوعیت تکرار: به هیچ عنوان و در هیچ مرحله‌ای چیزی که کاربر گفت را تکرار نکن. "
+                "هیچ وقت نگو 'پس شما یک کباب کوبیده می‌خوای' یا 'پس سفارش شما اینه' یا 'پس شما گفتید' یا هر جمله مشابهی که چیزی که کاربر گفت را دوباره می‌گوید. "
+                "بعد از هر پاسخ کاربر (غذا، آدرس، نام، و غیره)، فقط به مرحله بعدی برو و سوال بعدی را بپرس. هیچ تکرار، تاکید، یا تاییدی نکن. "
+                "فقط در آخر (قبل از ثبت) یکبار کل سفارش را مرور کن و بعد از تایید کاربر فقط ثبت را انجام بده. "
+                "خیلی مهم - کباب کوبیده: وقتی کاربر کباب کوبیده سفارش داد (مثلا 'یک کباب کوبیده'، 'دو کباب کوبیده'، 'یک کوبیده'، 'دو کوبیده'، 'یک پرس کوبیده'، 'دو پرس کوبیده')، "
+                "هیچ وقت از او نپرس 'چند تا کباب کوبیده می‌خوای' یا 'چند سیخ کباب کوبیده می‌خوای'. "
+                "فقط همان تعداد کباب کوبیده‌ای که گفته را مستقیماً ثبت کن (اگر گفت 'یک کوبیده' = یک کباب کوبیده، اگر گفت 'دو کوبیده' = دو کباب کوبیده). "
+                "مطلقاً از پرسیدن درباره تعداد یا سیخ خودداری کن و بلافاصله به مرحله بعدی (آدرس) برو. "
+                "مهم: هیچ وقت شماره سفارش (order ID) را به کاربر نگو. فقط وضعیت و جزئیات سفارش را بگو. "
                 "تماس را فقط با صراحت کاربر قطع کنید (خداحافظ، بای، قطع کن). سکوت به معنای پایان نیست.")
         else:
             base_instructions_template = (
@@ -840,6 +721,17 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 "{name_instruction}"
                 "شماره تلفن خودکار است، نپرسید. "
                 "اگر کلمه‌ای شبیه نام غذا بود، آن را پیشنهاد دهید (مثلا: 'کووید' → 'کوبیده فرمودید؟'). "
+                "خیلی مهم - استخراج تعداد: وقتی کاربر می‌گوید 'یک ته‌چین مرغ میخام' یا 'دو کباب میخوام'، تعداد را از همان جمله استخراج کن. "
+                "اگر کاربر تعداد را در همان جمله گفت، دیگر از او تعداد نپرس. "
+                "خیلی مهم - ممنوعیت تکرار: به هیچ عنوان و در هیچ مرحله‌ای چیزی که کاربر گفت را تکرار نکن. "
+                "هیچ وقت نگو 'پس شما یک کباب کوبیده می‌خوای' یا 'پس سفارش شما اینه' یا 'پس شما گفتید' یا هر جمله مشابهی که چیزی که کاربر گفت را دوباره می‌گوید. "
+                "بعد از هر پاسخ کاربر (غذا، آدرس، نام، و غیره)، فقط به مرحله بعدی برو و سوال بعدی را بپرس. هیچ تکرار، تاکید، یا تاییدی نکن. "
+                "فقط در آخر (قبل از ثبت) یکبار کل سفارش را مرور کن و بعد از تایید کاربر فقط ثبت را انجام بده. "
+                "خیلی مهم - کباب کوبیده: وقتی کاربر کباب کوبیده سفارش داد (مثلا 'یک کباب کوبیده'، 'دو کباب کوبیده'، 'یک کوبیده'، 'دو کوبیده'، 'یک پرس کوبیده'، 'دو پرس کوبیده')، "
+                "هیچ وقت از او نپرس 'چند تا کباب کوبیده می‌خوای' یا 'چند سیخ کباب کوبیده می‌خوای'. "
+                "فقط همان تعداد کباب کوبیده‌ای که گفته را مستقیماً ثبت کن (اگر گفت 'یک کوبیده' = یک کباب کوبیده، اگر گفت 'دو کوبیده' = دو کباب کوبیده). "
+                "مطلقاً از پرسیدن درباره تعداد کوبیده یا کباب کوبیده اگر خودش اعلام کرده بود خودداری کن و بلافاصله به مرحله بعدی (آدرس) برو. "
+                "مهم: هیچ وقت شماره سفارش (order ID) را به کاربر نگو. فقط وضعیت و جزئیات سفارش را بگو. "
                 "تماس را فقط با صراحت کاربر قطع کنید (خداحافظ، بای، قطع کن). سکوت به معنای پایان نیست."
             )
         
@@ -869,32 +761,30 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 
                 # Try to get template from config
                 template = scenario_config.get('single_order_template',
-                    "مشتری سفارش #{order_id} ({status_display}) دارد. "
+                    "مشتری سفارش ({status_display}) دارد. "
                     "1) وضعیت را تایید کنید و بپرسید سوالی دارند. "
                     "2) برای سفارش جدید به سناریوی ثبت بروید. "
                     "3) برای بررسی مجدد از track_order استفاده کنید. "
-                    "4) درباره زمان/جزئیات پاسخ دهید.")
+                    "4) درباره زمان/جزئیات پاسخ دهید. "
+                    "مهم: هیچ وقت شماره سفارش را به کاربر نگو.")
                 
-                scenario_instructions = template.format(
-                    order_id=order_id,
-                    status_display=status_display
-                )
+                # Use safe replacement to avoid KeyError with other curly braces
+                scenario_instructions = template.replace("{status_display}", str(status_display))
             else:
                 # Multiple orders
                 order_ids = [str(o.get('id', '')) for o in orders]
                 
                 # Try to get template from config
                 template = scenario_config.get('multiple_orders_template',
-                    "مشتری {orders_count} سفارش تحویل نشده دارد: {order_ids}. "
+                    "مشتری {orders_count} سفارش تحویل نشده دارد. "
                     "1) وضعیت را تایید کنید و بپرسید سوالی دارند. "
                     "2) برای سفارش جدید به سناریوی ثبت بروید. "
                     "3) برای بررسی مجدد از track_order استفاده کنید. "
-                    "4) درباره زمان/جزئیات پاسخ دهید.")
+                    "4) درباره زمان/جزئیات پاسخ دهید. "
+                    "مهم: هیچ وقت شماره سفارش را به کاربر نگو.")
                 
-                scenario_instructions = template.format(
-                    orders_count=orders_count,
-                    order_ids=', '.join(order_ids)
-                )
+                # Use safe replacement to avoid KeyError with other curly braces
+                scenario_instructions = template.replace("{orders_count}", str(orders_count))
             
             # Add status-specific guidance for latest order
             latest_order = orders[0]
@@ -925,12 +815,23 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 "مراحل: 1) پیشنهادات ویژه (get_menu_specials) اگر درخواست شد. "
                 "2) غذاها را بگیرید؛ اگر موجود نبود با search_menu_item شبیه‌ترین را بیابید. "
                 "3) آدرس را بگیرید. "
-                "4) توضیحات (notes) را ثبت کنید: 'بدون گوجه'، 'بدون پیاز'، 'ممنون میشم اگر خیارشور نداشته باشه' و غیره. "
-                "5) همه غذاها و تعدادها را ثبت کنید: 'یک کباب و دو دوغ' → [{item_name: 'کباب', quantity: 1}, {item_name: 'دوغ', quantity: 2}]. "
-                "6) فقط یکبار در آخر تماس (قبل از ثبت) مرور و تایید بگیرید. "
-                "7) وقتی کاربر گفت 'بله ثبت کن'/'باشه'/'تایید' و همه اطلاعات کامل است، مرور کنید: 'پس سفارش شما: دو کباب، سه دوغ - درست است؟' "
+                "4) همه غذاها و تعدادها را ثبت کنید: 'یک کباب و دو دوغ' → [{item_name: 'کباب', quantity: 1}, {item_name: 'دوغ', quantity: 2}]. "
+                "5) فقط یکبار در آخر تماس (قبل از ثبت) مرور و تایید بگیرید. "
+                "6) وقتی همه اطلاعات کامل است و کاربر آماده ثبت است، فقط یکبار کل سفارش را مرور کنید: 'پس سفارش شما: دو کباب، سه دوغ - درست است؟' "
+                "7) بعد از تایید کاربر ('بله'/'درسته'/'باشه'/'ثبت کن')، فقط create_order را صدا بزنید و هیچ چیز دیگری نگو. "
                 "8) قبل از create_order: items خالی نیست، customer_name و address موجود، همه غذاها و تعدادها درست، notes ثبت شده. "
-                "9) فقط یکبار create_order را صدا بزنید.")
+                "9) فقط یکبار create_order را صدا بزنید. "
+                "خیلی مهم - ممنوعیت تکرار: به هیچ عنوان و در هیچ مرحله‌ای چیزی که کاربر گفت را تکرار نکن. "
+                "هیچ وقت نگو 'پس شما یک کباب کوبیده می‌خوای' یا 'پس سفارش شما اینه' یا 'پس شما گفتید' یا هر جمله مشابهی که چیزی که کاربر گفت را دوباره می‌گوید. "
+                "بعد از هر پاسخ کاربر (غذا، آدرس، نام، و غیره)، فقط به مرحله بعدی برو و سوال بعدی را بپرس. هیچ تکرار، تاکید، یا تاییدی نکن. "
+                "فقط در آخر (قبل از ثبت) یکبار کل سفارش را مرور کن و بعد از تایید کاربر فقط ثبت را انجام بده. "
+                "خیلی مهم - استخراج تعداد: وقتی کاربر می‌گوید 'یک ته‌چین مرغ میخام' یا 'دو کباب میخوام'، تعداد را از همان جمله استخراج کن (یک=1، دو=2، سه=3 و غیره). "
+                "اگر کاربر تعداد را در همان جمله گفت، دیگر از او تعداد نپرس و همان عدد را استفاده کن. "
+                "خیلی مهم - کباب کوبیده: وقتی کاربر کباب کوبیده سفارش داد (مثلا 'یک کباب کوبیده'، 'دو کباب کوبیده'، 'یک کوبیده'، 'دو کوبیده'، 'یک پرس کوبیده'، 'دو پرس کوبیده')، "
+                "هیچ وقت از او نپرس 'چند تا کباب کوبیده می‌خوای' یا 'چند سیخ کباب کوبیده می‌خوای'. "
+                "فقط همان تعداد کباب کوبیده‌ای که گفته را مستقیماً ثبت کن (اگر گفت 'یک کوبیده' = یک کباب کوبیده quantity=1، اگر گفت 'دو کوبیده' = دو کباب کوبیده quantity=2). "
+                "مطلقاً از پرسیدن درباره تعداد یا سیخ خودداری کن و بلافاصله به مرحله بعدی (آدرس) برو. "
+                "مهم: هیچ وقت شماره سفارش (order ID) را به کاربر نگو. فقط وضعیت و جزئیات سفارش را بگو.")
             
             name_instruction = ""
             if self.customer_name_from_history:
@@ -938,130 +839,84 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             else:
                 name_instruction = "نام را بپرسید. "
             
-            scenario_instructions = template.format(name_instruction=name_instruction)
+            # Use safe formatting that only replaces {name_instruction}
+            # Escape other curly braces in the template to avoid KeyError
+            # First, escape all other { } except {name_instruction}
+            import re
+            # Replace {name_instruction} with a placeholder
+            temp_placeholder = "___NAME_INSTRUCTION_PLACEHOLDER___"
+            escaped_template = template.replace("{name_instruction}", temp_placeholder)
+            # Escape all remaining curly braces
+            escaped_template = escaped_template.replace("{", "{{").replace("}", "}}")
+            # Restore {name_instruction}
+            escaped_template = escaped_template.replace(temp_placeholder, "{name_instruction}")
+            # Now format safely
+            scenario_instructions = escaped_template.format(name_instruction=name_instruction)
         
         return base_instructions + " " + scenario_instructions
 
     # ---------------------- session start ----------------------
     async def start(self):
-        """Starts OpenAI connection, connects Soniox, runs main loop."""
-        logging.info("\n" + "=" * 80)
-        logging.info("🎬 NEW CALL - Restaurant Ordering System")
-        logging.info("=" * 80)
-        logging.info("FLOW start: connecting OpenAI WS → %s", self.url)
+        logging.info("NEW CALL - connecting OpenAI WS")
         openai_headers = {"Authorization": f"Bearer {self.key}", "OpenAI-Beta": "realtime=v1"}
         self.ws = await connect(self.url, additional_headers=openai_headers)
-        logging.info("FLOW start: OpenAI WS connected")
 
-        # Expect initial hello from server
         try:
             json.loads(await self.ws.recv())
-            logging.info("FLOW start: OpenAI hello received")
         except ConnectionClosedOK:
-            logging.info("FLOW start: OpenAI WS closed during hello")
             return
         except ConnectionClosedError as e:
-            logging.error("FLOW start: OpenAI hello error: %s", e)
+            logging.error("OpenAI hello error: %s", e)
             return
 
-        # Check caller's phone number and orders BEFORE building session (for customized scenario)
         caller_phone = self.call.from_number
-        logging.info("📞 Caller phone number: %s", caller_phone or "Not available")
-        
-        # Check for undelivered orders (returns list of ALL undelivered orders)
         has_undelivered, orders = await self._check_undelivered_order(caller_phone)
-        logging.info("📦 Order status: has_undelivered=%s, orders_count=%d", 
-                     has_undelivered, len(orders) if orders else 0)
-        if orders:
-            for order in orders:
-                logging.info("   - Order ID: %s, Status: %s", order.get('id'), order.get('status_display'))
-        
-        # Build DYNAMIC customized instructions based on call context
-        # This creates a unique scenario for EACH call based on order status
         customized_instructions = self._build_customized_instructions(has_undelivered, orders)
-        logging.info("🎯 DYNAMIC SCENARIO: Customized instructions built for this specific call")
-        if has_undelivered and orders:
-            logging.info("   → Scenario: Customer with %d undelivered order(s)", len(orders))
-        else:
-            logging.info("   → Scenario: New customer or all orders delivered - focus on new order")
-        if self.customer_name_from_history:
-            logging.info("   → Customer name from history: %s", self.customer_name_from_history)
-        logging.debug("   Instructions preview: %s", customized_instructions[:200] + "...")
 
-        # Build session with customized instructions
         self.session = {
-            "modalities": ["text", "audio"],  # REQUIRED: Enable audio output!
+            "modalities": ["text", "audio"],
             "turn_detection": {
                 "type": self.cfg.get("turn_detection_type", "OPENAI_TURN_DETECT_TYPE", "server_vad"),
-                "silence_duration_ms": int(self.cfg.get("turn_detection_silence_ms", "OPENAI_TURN_DETECT_SILENCE_MS", 500)),  # 1.2 seconds
+                "silence_duration_ms": int(self.cfg.get("turn_detection_silence_ms", "OPENAI_TURN_DETECT_SILENCE_MS", 500)),
                 "threshold": float(self.cfg.get("turn_detection_threshold", "OPENAI_TURN_DETECT_THRESHOLD", 0.6)),
                 "prefix_padding_ms": int(self.cfg.get("turn_detection_prefix_ms", "OPENAI_TURN_DETECT_PREFIX_MS", 300)),
             },
-            "input_audio_format": self.get_audio_format(),   # your existing structure
-            "output_audio_format": self.get_audio_format(),  # plays back via your codec parser
-            # Soniox is the only STT engine - no Whisper
+            "input_audio_format": self.get_audio_format(),
+            "output_audio_format": self.get_audio_format(),
             "voice": self.voice,
             "temperature": float(self.cfg.get("temperature", "OPENAI_TEMPERATURE", 0.8)),
             "max_response_output_tokens": self.cfg.get("max_tokens", "OPENAI_MAX_TOKENS", "inf"),
             "tools": self._get_function_definitions(),
             "tool_choice": "auto",
+            "instructions": customized_instructions
         }
-        # Use customized instructions instead of static ones
-        self.session["instructions"] = customized_instructions
-        logging.info("✅ Customized instructions applied to session")
 
-        # Send session update
         await self.ws.send(json.dumps({"type": "session.update", "session": self.session}))
-        logging.info("FLOW start: OpenAI session.update sent (with customized scenario)")
         
-        # Build dynamic welcome message based on order status
         welcome_message = self._build_welcome_message(has_undelivered, orders)
-        logging.info("💬 Welcome message: %s", welcome_message)
-        
-        # Send welcome message
         if welcome_message:
             intro_payload = {
-                "modalities": ["text", "audio"],  # CRITICAL: Force audio output!
+                "modalities": ["text", "audio"],
                 "instructions": "Please greet the user with the following: " + welcome_message
             }
             await self.ws.send(json.dumps({"type": "response.create", "response": intro_payload}))
-            logging.info("FLOW start: dynamic welcome message sent (with audio modality)")
 
-        # Connect Soniox (NOT gated on intro)
         soniox_key_ok = bool(self.soniox_key and self.soniox_key != "SONIOX_API_KEY")
-        logging.info("\n🔊 STT Configuration:")
-        logging.info("  Soniox Enabled: %s", self.soniox_enabled)
-        logging.info("  Soniox Key Available: %s", soniox_key_ok)
-        
         if self.soniox_enabled and soniox_key_ok:
-            logging.info("FLOW STT: SONIOX enabled | model=%s | url=%s", self.soniox_model, self.soniox_url)
             ok = await self._soniox_connect()
             if ok:
-                logging.info("✅ SONIOX CONNECTED - Persian STT Active (ONLY STT ENGINE)")
                 self.soniox_task = asyncio.create_task(self._soniox_recv_loop(), name="soniox-recv")
                 self.soniox_keepalive_task = asyncio.create_task(self._soniox_keepalive_loop(), name="soniox-keepalive")
             else:
-                logging.error("❌ FLOW STT: Soniox connect failed - NO STT AVAILABLE (Whisper fallback disabled)")
-                logging.error("   The system will continue but speech recognition will not work until Soniox is available")
+                logging.error("Soniox connect failed")
         else:
-            # Soniox is required - no fallback
-            if not soniox_key_ok:
-                logging.error("❌ FLOW STT: SONIOX_API_KEY not set - NO STT AVAILABLE (Whisper fallback disabled)")
-            else:
-                logging.error("❌ FLOW STT: SONIOX disabled by config - NO STT AVAILABLE (Whisper fallback disabled)")
-            logging.error("   The system will continue but speech recognition will not work until Soniox is enabled")
+            logging.error("Soniox not available")
 
-        # Start consuming OpenAI events (audio out, tools, etc.)
         await self.handle_command()
 
-    # Whisper fallback removed - ONLY Soniox is used for STT
-    # If Soniox fails, the system will log errors but continue without STT
-
     # ---------------------- OpenAI event loop ----------------------
-    async def handle_command(self):  # pylint: disable=too-many-branches
-        """Handles OpenAI events; plays TTS audio; responds to tools."""
+    async def handle_command(self):
         leftovers = b""
-        logging.info("FLOW TTS: handle_command loop started")
         async for smsg in self.ws:
             msg = json.loads(smsg)
             t = msg["type"]
@@ -1073,7 +928,6 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     self.queue.put_nowait(packet)
 
             elif t == "response.audio.done":
-                logging.info("FLOW TTS: response.audio.done")
                 if len(leftovers) > 0:
                     packet = await self.run_in_thread(self.codec.parse, None, leftovers)
                     self.queue.put_nowait(packet)
@@ -1083,22 +937,8 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 if msg["item"].get("status") == "completed":
                     self.drain_queue()
 
-            elif t == "conversation.item.input_audio_transcription.completed":
-                # Whisper fallback removed - transcripts should only come from Soniox
-                transcript = msg.get("transcript", "").rstrip()
-                if transcript:
-                    logging.warning("⚠️  Received transcript from OpenAI (should only come from Soniox): %s", transcript)
-                    # Do not process - Soniox is the only STT source
-
-            elif t == "response.audio_transcript.done":
-                transcript = msg.get("transcript", "")
-                logging.info("=" * 80)
-                logging.info("AI RESPONSE (Audio): %s", transcript)
-                logging.info("=" * 80)
-
             elif t == "response.function_call_arguments.done":
                 global call_id
-                unique_time = time.time()
                 call_id = msg.get("call_id")
                 name = msg.get("name")
                 try:
@@ -1106,31 +946,22 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 except Exception:
                     args = {}
                 
-                logging.info("=" * 80)
                 logging.info("FUNCTION CALL: %s", name)
-                logging.info("Arguments: %s", json.dumps(args, ensure_ascii=False, indent=2))
-                logging.info("=" * 80)
 
                 if name == "terminate_call":
-                    logging.info("FLOW tool: terminate_call requested")
-                    self.terminate_call()  # Not async, don't await
+                    self.terminate_call()
 
                 elif name == "transfer_call":
                     if self.transfer_to:
-                        logging.info("FLOW tool: Transferring call via REFER")
                         self.call.ua_session_update(method="REFER", headers={
                             "Refer-To": f"<{self.transfer_to}>",
                             "Referred-By": f"<{self.transfer_by}>"
                         })
-                    else:
-                        logging.warning("FLOW tool: transfer_call requested but transfer_to not configured")
 
                 elif name == "track_order":
-                    # Track order by phone number (use caller's phone automatically)
                     phone_number = args.get("phone_number") or self.call.from_number
                     if not phone_number:
                         output = {"success": False, "message": "شماره تلفن در دسترس نیست."}
-                        logging.error("❌ No phone number available for tracking")
                         await self.ws.send(json.dumps({
                             "type": "conversation.item.create",
                             "item": {"type": "function_call_output", "call_id": call_id,
@@ -1143,10 +974,6 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                         continue
                     
                     normalized_phone = normalize_phone_number(phone_number)
-                    logging.info("🔍 TRACKING ORDER")
-                    logging.info("  Original: %s", phone_number)
-                    logging.info("  Normalized: %s", normalized_phone)
-                    
                     try:
                         result = await self.api.track_order(normalized_phone)
                         if result and result.get("success"):
@@ -1155,21 +982,20 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                                 latest = orders[0]
                                 output = {
                                     "success": True,
-                                    "message": f"سفارش شماره {latest['id']} شما {latest['status_display']} است.",
+                                    "message": f"سفارش شما {latest['status_display']} است.",
                                     "order": latest
                                 }
-                                logging.info("✅ Order found: ID=%s, Status=%s", latest['id'], latest['status_display'])
                             else:
-                                output = {"success": False, "message": "سفارشی با این شماره یافت نشد."}
-                                logging.warning("⚠️  No orders found for phone: %s", phone_number)
+                                output = {
+                                    "success": True,
+                                    "message": "شما سفارشی ثبت نکرده‌اید خوشحال می‌شوم اطلاعات سفارش جدید را بدونم",
+                                    "orders": []
+                                }
                         else:
                             output = {"success": False, "message": "خطا در پیگیری سفارش"}
-                            logging.error("❌ Error tracking order")
                     except Exception as e:
-                        logging.error(f"❌ Exception tracking order: {e}")
+                        logging.error("Exception tracking order: %s", e)
                         output = {"success": False, "message": "خطا در اتصال به سرور"}
-                    
-                    logging.info("FUNCTION RESULT: %s", json.dumps(output, ensure_ascii=False))
                     
                     await self.ws.send(json.dumps({
                         "type": "conversation.item.create",
@@ -1182,28 +1008,15 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     }))
 
                 elif name == "get_menu_specials":
-                    # Get special menu items
-                    logging.info("⭐ GETTING MENU SPECIALS")
-                    
                     try:
                         result = await self.api.get_menu_specials()
                         if result and result.get("success"):
-                            items = result.get("items", [])
-                            output = {
-                                "success": True,
-                                "specials": items
-                            }
-                            logging.info("✅ Found %d special items", len(items))
-                            for item in items[:5]:  # Log first 5
-                                logging.info("  - %s: %s تومان", item.get('name'), item.get('final_price'))
+                            output = {"success": True, "specials": result.get("items", [])}
                         else:
                             output = {"success": False, "message": "خطا در دریافت پیشنهادات"}
-                            logging.error("❌ Error getting specials")
                     except Exception as e:
-                        logging.error(f"❌ Exception getting specials: {e}")
+                        logging.error("Exception getting specials: %s", e)
                         output = {"success": False, "message": "خطا در اتصال به سرور"}
-                    
-                    logging.info("FUNCTION RESULT: %d special items", len(output.get("specials", [])))
                     
                     await self.ws.send(json.dumps({
                         "type": "conversation.item.create",
@@ -1216,31 +1029,17 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     }))
 
                 elif name == "search_menu_item":
-                    # Search for menu item
                     item_name = args.get("item_name")
                     category = args.get("category")
-                    logging.info("🔍 SEARCHING MENU: '%s' (category: %s)", item_name, category or "همه")
-                    
                     try:
                         result = await self.api.search_menu_item(item_name, category)
                         if result and result.get("success"):
-                            items = result.get("items", [])
-                            output = {
-                                "success": True,
-                                "items": items
-                            }
-                            logging.info("✅ Found %d matching items:", len(items))
-                            for item in items:
-                                logging.info("  - %s (%s): %s تومان", 
-                                           item.get('name'), item.get('category'), item.get('final_price'))
+                            output = {"success": True, "items": result.get("items", [])}
                         else:
                             output = {"success": False, "message": "غذایی با این نام یافت نشد"}
-                            logging.warning("⚠️  No items found for: %s", item_name)
                     except Exception as e:
-                        logging.error(f"❌ Exception searching menu: {e}")
+                        logging.error("Exception searching menu: %s", e)
                         output = {"success": False, "message": "خطا در جستجو"}
-                    
-                    logging.info("FUNCTION RESULT: %d items found", len(output.get("items", [])))
                     
                     await self.ws.send(json.dumps({
                         "type": "conversation.item.create",
@@ -1253,11 +1052,8 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     }))
 
                 elif name == "create_order":
-                    # Prevent duplicate orders - check if we just created an order recently
                     current_time = time.time()
-                    if self.last_order_time and (current_time - self.last_order_time) < 10:  # 10 seconds cooldown
-                        logging.warning("⚠️  DUPLICATE ORDER PREVENTION: Order creation attempted too soon after last order (%.1f seconds ago)", 
-                                      current_time - self.last_order_time)
+                    if self.last_order_time and (current_time - self.last_order_time) < 10:
                         output = {
                             "success": False, 
                             "message": "سفارش قبلی شما در حال پردازش است. لطفا چند لحظه صبر کنید."
@@ -1273,13 +1069,10 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                         }))
                         continue
                     
-                    # Create restaurant order (use caller's phone automatically)
                     customer_name = args.get("customer_name")
-                    # Always use caller's phone number automatically
                     phone_number = self.call.from_number or args.get("phone_number")
                     if not phone_number:
                         output = {"success": False, "message": "شماره تلفن در دسترس نیست. لطفا دوباره تماس بگیرید."}
-                        logging.error("❌ No phone number available for order creation")
                         await self.ws.send(json.dumps({
                             "type": "conversation.item.create",
                             "item": {"type": "function_call_output", "call_id": call_id,
@@ -1295,22 +1088,14 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     items = args.get("items", [])
                     notes = args.get("notes")
                     
-                    # CRITICAL VALIDATION: Reject order if missing required fields
                     validation_errors = []
-                    
-                    # Check customer name
                     if not customer_name or not customer_name.strip():
                         validation_errors.append("نام مشتری")
-                    
-                    # Check address
                     if not address or not address.strip():
                         validation_errors.append("آدرس")
-                    
-                    # Check items - MUST NOT BE EMPTY
-                    if not items or len(items) == 0:
+                    if not items:
                         validation_errors.append("لیست غذاها (هیچ غذایی ثبت نشده)")
                     else:
-                        # Validate each item has required fields
                         for idx, item in enumerate(items):
                             item_name = item.get('item_name', '').strip()
                             quantity = item.get('quantity', 0)
@@ -1318,17 +1103,9 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                                 validation_errors.append(f"نام غذا در آیتم {idx + 1}")
                             if not quantity or quantity <= 0:
                                 validation_errors.append(f"تعداد در آیتم {idx + 1} (باید عدد مثبت باشد، مقدار فعلی: {quantity})")
-                            # Log item details for debugging
-                            logging.info("  ✅ Validating item %d: '%s' × %d", idx + 1, item_name, quantity)
                     
-                    # If validation fails, reject the order
                     if validation_errors:
                         error_message = f"خطا: اطلاعات ناقص است. لطفا موارد زیر را تکمیل کنید: {', '.join(validation_errors)}"
-                        logging.error("❌ ORDER VALIDATION FAILED: %s", ', '.join(validation_errors))
-                        logging.error("   Customer: %s", customer_name)
-                        logging.error("   Address: %s", address)
-                        logging.error("   Items count: %d", len(items) if items else 0)
-                        
                         output = {
                             "success": False,
                             "message": error_message,
@@ -1345,26 +1122,13 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                         }))
                         continue
                     
-                    # Normalize phone number
                     normalized_phone = normalize_phone_number(phone_number)
-                    
-                    logging.info("=" * 80)
-                    logging.info("📝 CREATING ORDER")
-                    logging.info("Customer: %s", customer_name)
-                    logging.info("Phone (original): %s", phone_number)
-                    logging.info("Phone (normalized): %s", normalized_phone)
-                    logging.info("Address: %s", address)
-                    logging.info("Items (%d):", len(items))
-                    for item in items:
-                        logging.info("  - %s × %d", item.get('item_name'), item.get('quantity', 1))
-                    if notes:
-                        logging.info("Notes: %s", notes)
-                    logging.info("=" * 80)
+                    logging.info("Creating order: Customer=%s, Items=%d", customer_name, len(items))
                     
                     try:
                         result = await self.api.create_order(
                             customer_name=customer_name,
-                            phone_number=normalized_phone,  # Use normalized phone
+                            phone_number=normalized_phone,
                             address=address,
                             items=items,
                             notes=notes
@@ -1373,81 +1137,23 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                         if result and result.get("success"):
                             order = result.get("order", {})
                             order_id = order.get('id')
-                            
-                            # Track this order creation to prevent duplicates
                             self.last_order_time = time.time()
                             self.recent_order_ids.add(order_id)
-                            logging.info("✅ Order ID %s tracked to prevent duplicates", order_id)
-                            
-                            # Verify order was created correctly - fetch it from database (for logging only)
-                            logging.info("🔍 Verifying order creation - fetching order from database...")
-                            try:
-                                # Fetch the created order to verify all items were captured
-                                verify_result = await self.api.track_order(normalized_phone)
-                                if verify_result and verify_result.get("success"):
-                                    all_orders = verify_result.get("orders", [])
-                                    created_order = None
-                                    for o in all_orders:
-                                        if o.get('id') == order_id:
-                                            created_order = o
-                                            break
-                                    
-                                    if created_order:
-                                        db_items = created_order.get('items', [])
-                                        submitted_items = items
-                                        
-                                        # Compare submitted items with database items (for logging only)
-                                        submitted_item_names = {item.get('item_name', '').lower().strip() for item in submitted_items}
-                                        db_item_names = {item.get('menu_item_name', '').lower().strip() for item in db_items}
-                                        
-                                        missing_items = submitted_item_names - db_item_names
-                                        
-                                        if missing_items:
-                                            logging.warning("⚠️  MISSING ITEMS DETECTED (logged for debugging): %s", missing_items)
-                                            logging.warning("   Submitted: %s", submitted_item_names)
-                                            logging.warning("   In DB: %s", db_item_names)
-                                            # Note: We don't tell the bot to create another order - just log it
-                                        
-                                        logging.info("✅ Order verification passed - order created successfully")
-                                        output = {
-                                            "success": True,
-                                            "message": f"سفارش شماره {order.get('id')} با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
-                                            "order_id": order.get("id"),
-                                            "total_price": order.get("total_price")
-                                        }
-                                    else:
-                                        logging.warning("⚠️  Could not find created order in database for verification")
-                                        output = {
-                                            "success": True,
-                                            "message": f"سفارش شماره {order.get('id')} با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
-                                            "order_id": order.get("id"),
-                                            "total_price": order.get("total_price")
-                                        }
-                            except Exception as verify_error:
-                                logging.error(f"⚠️  Error verifying order: {verify_error}")
-                                # Fallback output if verification fails
-                                output = {
-                                    "success": True,
-                                    "message": f"سفارش شماره {order.get('id')} با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
-                                    "order_id": order.get("id"),
-                                    "total_price": order.get("total_price")
-                                }
-                            
-                            # Output is set in verification block above
-                            logging.info("✅ ORDER CREATED SUCCESSFULLY!")
-                            logging.info("Order ID: %s", order.get('id'))
-                            logging.info("Total Price: %s تومان", f"{order.get('total_price'):,}")
-                            # Mark that order confirmation has been done (only once per call)
                             self._order_confirmed = True
-                            logging.info("✅ Order confirmation flag set - no more confirmations will be requested")
+                            
+                            output = {
+                                "success": True,
+                                "message": f"سفارش شما با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
+                                "order_id": order.get("id"),
+                                "total_price": order.get("total_price")
+                            }
+                            logging.info("Order created: ID=%s, Total=%s", order_id, order.get('total_price'))
                         else:
                             output = {"success": False, "message": result.get("message", "خطا در ثبت سفارش")}
-                            logging.error("❌ ORDER FAILED: %s", result.get("message"))
+                            logging.error("Order failed: %s", result.get("message"))
                     except Exception as e:
-                        logging.error(f"❌ Exception creating order: {e}", exc_info=True)
+                        logging.error("Exception creating order: %s", e, exc_info=True)
                         output = {"success": False, "message": "خطا در اتصال به سرور"}
-                    
-                    logging.info("FUNCTION RESULT: %s", json.dumps(output, ensure_ascii=False))
                     
                     await self.ws.send(json.dumps({
                         "type": "conversation.item.create",
@@ -1467,23 +1173,18 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
 
             else:
                 # Log ALL events with full details for debugging
-                logging.info("OpenAI event: %s | data: %s", t, json.dumps(msg, ensure_ascii=False)[:500])
+                # logging.info("OpenAI event: %s | data: %s", t, json.dumps(msg, ensure_ascii=False)[:500])
+                pass
 
     # ---------------------- lifecycle helpers ----------------------
     def terminate_call(self):
-        """Marks call as terminated (your framework should then call close())."""
         self.call.terminated = True
-        logging.info("\n" + "=" * 80)
-        logging.info("📞 CALL TERMINATED")
-        logging.info("=" * 80)
-        logging.info("FLOW call: terminate_call set -> will close sockets")
+        logging.info("CALL TERMINATED")
 
     async def run_in_thread(self, func, *args):
-        """Runs a blocking function in a thread"""
         return await asyncio.to_thread(func, *args)
 
     def drain_queue(self):
-        """Drains the playback queue to avoid buffer bloat"""
         count = 0
         try:
             while self.queue.get_nowait():
@@ -1496,13 +1197,9 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
     async def _soniox_connect(self) -> bool:
         key = self.soniox_key if self.soniox_key and self.soniox_key != "SONIOX_API_KEY" else None
         if not key:
-            logging.error("FLOW STT: SONIOX_API_KEY not set; STT disabled")
             return False
         try:
-            logging.info("FLOW STT: connecting Soniox WS → %s", self.soniox_url)
             self.soniox_ws = await connect(self.soniox_url)
-            logging.info("FLOW STT: Soniox WS connected")
-
             fmt, sr, ch = self._soniox_audio_format()
             init = {
                 "api_key": key,
@@ -1514,87 +1211,62 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 "enable_speaker_diarization": self.soniox_enable_diar,
                 "enable_language_identification": self.soniox_enable_lid,
                 "enable_endpoint_detection": self.soniox_enable_epd,
+                "language": "fa"
             }
-            # Note: context_phrases might not be supported in WebSocket API
-            # Removed to avoid potential errors - can be added back if confirmed supported
+            if hasattr(self, 'soniox_context_phrases') and self.soniox_context_phrases:
+                try:
+                    init["context_phrases"] = self.soniox_context_phrases
+                except Exception:
+                    pass
             
-            # Send initialization message
             await self.soniox_ws.send(json.dumps(init))
-            logging.info("FLOW STT: Soniox init sent (fmt=%s sr=%s ch=%s hints=%s upsampling=%s)", 
-                        fmt, sr, ch, self.soniox_lang_hints, self.soniox_upsample)
             
-            # Wait for confirmation from Soniox (with timeout)
-            # IMPORTANT: We must read the confirmation BEFORE starting the recv_loop
-            # Otherwise the recv_loop will consume the confirmation message
             try:
                 confirmation = await asyncio.wait_for(self.soniox_ws.recv(), timeout=5.0)
                 if isinstance(confirmation, (bytes, bytearray)):
-                    logging.warning("FLOW STT: Received binary data instead of JSON confirmation")
                     return False
                 conf_msg = json.loads(confirmation)
                 if conf_msg.get("error_code"):
-                    error_code = conf_msg.get("error_code")
-                    error_msg = conf_msg.get("error_message", "Unknown error")
-                    logging.error("FLOW STT: Soniox init error %s: %s", error_code, error_msg)
-                    logging.error("FLOW STT: Full error response: %s", json.dumps(conf_msg, ensure_ascii=False))
+                    logging.error("Soniox init error: %s", conf_msg.get("error_message"))
                     return False
-                logging.info("FLOW STT: Soniox initialization confirmed: %s", json.dumps(conf_msg, ensure_ascii=False))
                 return True
             except asyncio.TimeoutError:
-                logging.warning("FLOW STT: No confirmation from Soniox within 5s, assuming OK and continuing")
                 return True
-            except Exception as e:
-                logging.warning("FLOW STT: Error waiting for confirmation: %s, assuming OK and continuing", e)
+            except Exception:
                 return True
         except Exception as e:
-            logging.error("FLOW STT: Soniox connect/init failed: %s", e, exc_info=True)
+            logging.error("Soniox connect failed: %s", e, exc_info=True)
             self.soniox_ws = None
             return False
 
     async def _soniox_keepalive_loop(self):
-        """Keep Soniox alive across silences; exits on termination."""
         try:
             while self.soniox_ws and not self.call.terminated:
                 await asyncio.sleep(self.soniox_keepalive_sec)
                 with contextlib.suppress(Exception):
                     await self.soniox_ws.send(json.dumps({"type": "keepalive"}))
-                logging.debug("FLOW STT: keepalive sent")
         except asyncio.CancelledError:
             pass
 
     async def _soniox_recv_loop(self):
         if not self.soniox_ws:
-            logging.info("FLOW STT: recv loop not started (no WS)")
             return
-        logging.info("FLOW STT: recv loop started")
         try:
             async for raw in self.soniox_ws:
-                # Soniox sends JSON text messages, not binary
                 if isinstance(raw, (bytes, bytearray)):
-                    logging.warning("FLOW STT: Received unexpected binary data, skipping")
                     continue
 
                 try:
                     msg = json.loads(raw)
                 except json.JSONDecodeError as e:
-                    logging.error("FLOW STT: Failed to parse JSON message: %s, raw: %s", e, raw[:200] if raw else "empty")
+                    logging.error("Failed to parse JSON: %s", e)
                     continue
 
                 if msg.get("error_code"):
-                    error_code = msg.get("error_code")
-                    error_msg = msg.get("error_message", "Unknown error")
-                    logging.error("FLOW STT: Soniox error %s: %s", error_code, error_msg)
-                    # Log full message for debugging
-                    logging.error("FLOW STT: Full error message: %s", json.dumps(msg, ensure_ascii=False))
+                    logging.error("Soniox error: %s", msg.get("error_message"))
                     continue
-                
-                # Log any unexpected message types for debugging
-                if "tokens" not in msg and "finished" not in msg and "error_code" not in msg:
-                    logging.debug("FLOW STT: Received message: %s", json.dumps(msg, ensure_ascii=False)[:200])
 
                 if msg.get("finished"):
-                    logging.info("FLOW STT: finished marker")
-                    # Cancel any pending flush timer
                     if self._soniox_flush_timer:
                         self._soniox_flush_timer.cancel()
                         self._soniox_flush_timer = None
@@ -1609,74 +1281,88 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 nonfinals = [t.get("text", "") for t in tokens if not t.get("is_final")]
                 has_nonfinal = any(not t.get("is_final") for t in tokens)
                 
-                # If new non-final tokens arrive, cancel any pending flush timer (user is still speaking)
                 if nonfinals and self._soniox_flush_timer:
-                    logging.debug("FLOW STT: New audio detected, cancelling flush timer")
                     self._soniox_flush_timer.cancel()
                     self._soniox_flush_timer = None
                 
-                # Log partial transcripts (non-final)
-                if nonfinals:
-                    logging.info("🎤 STT (partial): %s", "".join(nonfinals))
-                
                 if finals:
                     final_text = "".join(finals)
-                    logging.info("✅ STT (final): %s", final_text)
+                    logging.info("STT (final): %s", final_text)
                     self._soniox_accum.append(final_text)
-                    # Cancel any existing flush timer
                     if self._soniox_flush_timer:
                         self._soniox_flush_timer.cancel()
-                    # Schedule flush after silence duration (0.75 seconds by default)
-                    # Only if there are no non-final tokens (user finished speaking)
                     if not has_nonfinal:
                         self._soniox_flush_timer = asyncio.create_task(
                             self._delayed_flush_soniox_segment()
                         )
-                        logging.debug("FLOW STT: Scheduled delayed flush after %dms silence", self.soniox_silence_duration_ms)
 
-                # Immediate flush for explicit finish markers
                 if any(t.get("text") == "<fin>" for t in tokens):
-                    # Cancel delayed flush if exists
                     if self._soniox_flush_timer:
                         self._soniox_flush_timer.cancel()
                         self._soniox_flush_timer = None
                     await self._flush_soniox_segment()
 
         except Exception as e:
-            logging.error("FLOW STT: recv loop error: %s", e)
+            logging.error("Soniox recv loop error: %s", e)
         finally:
             with contextlib.suppress(Exception):
                 if self.soniox_ws:
                     await self.soniox_ws.close()
-                    logging.info("FLOW STT: Soniox WS closed (recv loop exit)")
             self.soniox_ws = None
 
     async def _delayed_flush_soniox_segment(self):
-        """Wait for silence duration before flushing Soniox segment."""
         try:
             await asyncio.sleep(self.soniox_silence_duration_ms / 1000.0)
-            # Check if timer wasn't cancelled (new audio might have come in)
             if self._soniox_flush_timer and not self._soniox_flush_timer.cancelled():
                 await self._flush_soniox_segment()
                 self._soniox_flush_timer = None
         except asyncio.CancelledError:
-            # Timer was cancelled (new audio came in), don't flush
-            logging.debug("FLOW STT: Flush timer cancelled (new audio detected)")
             pass
     
+    def _correct_common_misrecognitions(self, text: str) -> str:
+        if not text:
+            return text
+        
+        original_text = text
+        corrected = text
+        
+        corrections = [
+            (r'\bپرس\s*کوبیده\b', 'کباب کوبیده'),
+            (r'(?<!کباب\s)\bکوبیده\b', 'کباب کوبیده'),
+            (r'\bیه\s*پرس\s*چهل\s*و\s*شش\s*گیگ\b', 'یه پرس چلو ششلیک'),
+            (r'\bیک\s*پرس\s*چهل\s*و\s*شش\s*گیگ\b', 'یک پرس چلو ششلیک'),
+            (r'\bیه\s*پرس\s*۴۶\s*گیگ\b', 'یه پرس ششلیک'),
+            (r'\bیک\s*پرس\s*۴۶\s*گیگ\b', 'یک پرس ششلیک'),
+            (r'\bیه\s*پرس\s*۶۱\b', 'یه پرس ششلیک'),
+            (r'\bیک\s*پرس\s*۶۱\b', 'یک پرس ششلیک'),
+            (r'\bچهل\s*و\s*شش\s*گیگ\b', 'چلو ششلیک'),
+            (r'\bچهار\s*صد\s*و\s*شصت\s*و\s*یک\b', 'چلو ششلیک'),
+            (r'\b۴۶۱\b', 'چلو ششلیک'),
+            (r'\b۴۶\s*گیگ\b', 'ششلیک'),
+            (r'\bشصت\s*و\s*یک\b', 'ششلیک'),
+            (r'\b۶۱\b', 'ششلیک'),
+        ]
+        
+        for pattern, replacement in corrections:
+            corrected = re.sub(pattern, replacement, corrected, flags=re.IGNORECASE)
+        
+        if corrected != original_text:
+            logging.info("STT correction: '%s' -> '%s'", original_text, corrected)
+        
+        return corrected
+    
     async def _flush_soniox_segment(self):
-        """Forward finalized Persian transcript to OpenAI to trigger TTS."""
         if not self._soniox_accum:
             return
         text = "".join(self._soniox_accum).strip()
         self._soniox_accum.clear()
         if not text:
             return
-        logging.info("=" * 80)
-        logging.info("SONIOX TRANSCRIPT (Persian): %s", text)
-        logging.info("=" * 80)
-        await self._send_user_text_to_openai(text)
-
+        
+        corrected_text = self._correct_common_misrecognitions(text)
+        logging.info("STT transcript: %s", corrected_text)
+        await self._send_user_text_to_openai(corrected_text)
+    
     async def _send_user_text_to_openai(self, text: str):
         try:
             await self.ws.send(json.dumps({
@@ -1687,80 +1373,50 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 "type": "response.create",
                 "response": {"modalities": ["text", "audio"]}
             }))
-            logging.info("FLOW TTS: forwarded transcript to OpenAI (response.create issued)")
         except Exception as e:
-            logging.error("FLOW TTS: forwarding transcript failed: %s", e)
+            logging.error("Error forwarding transcript: %s", e)
 
-    # ---------------------- audio ingress ----------------------
     async def send(self, audio):
-        """Primary audio path: RTP bytes -> Soniox; (opt) also to OpenAI."""
         if self.call.terminated:
-            logging.debug("FLOW media: drop audio (call terminated)")
             return
 
-        # Process audio for Soniox: convert G.711 to PCM and upsample for better quality
         processed_audio = self._process_audio_for_soniox(audio)
         
-        # Send to Soniox (PCM at 16kHz for better recognition)
         try:
             if self.soniox_ws:
-                # Send audio as binary data (bytes) - Soniox expects raw PCM audio
-                # We'll catch exceptions if connection is closed
                 await self.soniox_ws.send(processed_audio)
-                fmt, sr, ch = self._soniox_audio_format()
-                logging.debug("FLOW media: sent %d bytes → Soniox (processed from %d bytes, format=%s sr=%s upsampling=%s)", 
-                             len(processed_audio), len(audio), fmt, sr, self.soniox_upsample)
-            else:
-                logging.debug("FLOW media: Soniox WS not ready yet - audio dropped (no Whisper fallback)")
-        except ConnectionClosedError as e:
-            logging.error("FLOW media: Soniox WS closed while sending audio: %s", e)
+        except ConnectionClosedError:
             self.soniox_ws = None
-            logging.error("❌ FLOW media: Soniox connection lost - NO STT AVAILABLE (Whisper fallback disabled)")
-            logging.error("   Audio will be dropped until Soniox reconnects")
+            logging.error("Soniox connection lost")
         except Exception as e:
-            error_str = str(e)
-            logging.error("FLOW media: error sending audio to Soniox: %s", e)
-            # If it's a WebSocket error (connection closed), mark connection as closed
-            if "1000" in error_str or "closed" in error_str.lower() or "ConnectionClosed" in str(type(e)):
-                logging.warning("FLOW media: Soniox WS connection error detected, marking as closed")
+            if "closed" in str(e).lower() or "ConnectionClosed" in str(type(e)):
                 self.soniox_ws = None
-                logging.error("❌ FLOW media: Soniox connection error - NO STT AVAILABLE (Whisper fallback disabled)")
-                logging.error("   Audio will be dropped until Soniox reconnects")
+                logging.error("Soniox connection error")
 
-        # (Optional) also forward to OpenAI input even when Soniox is on (generally not needed)
         if self.forward_audio_to_openai and self.ws:
             try:
                 await self.ws.send(json.dumps({
                     "type": "input_audio_buffer.append",
                     "audio": base64.b64encode(audio).decode("utf-8")
                 }))
-            except Exception as e:
-                logging.warning("FLOW media: forward-to-OpenAI failed (ignored): %s", e)
+            except Exception:
+                pass
 
-    # ---------------------- shutdown ----------------------
     async def close(self):
-        """Close Soniox first (avoid concurrent limit), then OpenAI."""
-        logging.info("FLOW close: closing sockets (Soniox → OpenAI)")
-
-        # Cancel background tasks
         for t in (self.soniox_keepalive_task, self.soniox_task):
             if t and not t.done():
                 t.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await t
 
-        # Close Soniox first
         try:
             if self.soniox_ws:
                 with contextlib.suppress(Exception):
                     await self.soniox_ws.send(json.dumps({"type": "finalize"}))
                 await self.soniox_ws.close()
-                logging.info("FLOW close: Soniox WS closed")
         finally:
             self.soniox_ws = None
 
-        # Then close OpenAI
         if self.ws:
             with contextlib.suppress(Exception):
                 await self.ws.close()
-                logging.info("FLOW close: OpenAI WS closed")

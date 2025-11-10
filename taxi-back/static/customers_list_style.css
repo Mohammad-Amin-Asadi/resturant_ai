@@ -16,6 +16,13 @@
     box-shadow: var(--shadow);
     transition: all 0.3s ease;
     animation: float-in 0.6s ease-out both;
+    position: relative;
+}
+
+.customer-card .card-head {
+    position: relative;
+    z-index: 1;
+    pointer-events: auto;
 }
 
 .customer-card:hover {
@@ -92,6 +99,43 @@
 
 .address-item:not(:last-child) {
     margin-bottom: 0;
+}
+
+/* Delete Customer Button */
+.delete-customer-btn {
+    background: rgba(220, 53, 69, 0.1);
+    border: 1px solid rgba(220, 53, 69, 0.3);
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: #dc3545;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+    position: relative;
+    z-index: 100;
+    pointer-events: auto;
+    flex-shrink: 0;
+}
+
+.delete-customer-btn:hover {
+    background: rgba(220, 53, 69, 0.2);
+    border-color: #dc3545;
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+}
+
+.delete-customer-btn:active {
+    transform: scale(0.95);
+}
+
+.delete-customer-btn svg {
+    width: 18px;
+    height: 18px;
+    pointer-events: none; /* Allow clicks to pass through SVG to button */
 }
 
 .no-customers {

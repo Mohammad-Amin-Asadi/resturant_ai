@@ -175,6 +175,30 @@ def delete_order(request, order_id):
     )
 
 
+@api_view(['DELETE'])
+def delete_customer(request, customer_id):
+    """Delete a customer from database"""
+    try:
+        customer = Customer.objects.get(id=customer_id)
+    except Customer.DoesNotExist:
+        return Response(
+            {'error': 'مشتری یافت نشد'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Store customer info before deletion
+    customer_name = customer.name
+    customer_phone = customer.phone_number
+    
+    # Delete the customer (CASCADE will handle related orders if configured)
+    customer.delete()
+    
+    return Response(
+        {'message': f'مشتری {customer_name} ({customer_phone}) با موفقیت حذف شد'},
+        status=status.HTTP_200_OK
+    )
+
+
 class AddOrderView(APIView):
     """Add new order with encryption support"""
     

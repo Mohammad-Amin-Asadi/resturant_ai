@@ -30,13 +30,31 @@ class DIDConfigLoader:
             default_dir = os.getenv('DID_CONFIG_DIR', './config/did/')
             self.config_dir = Path(default_dir)
         
+        # If path is relative, try to resolve it relative to the engine directory
+        if not self.config_dir.is_absolute():
+            # Try to find the engine directory (where this file is located)
+            # This file is in: engine/src/did_config.py
+            # Config should be in: engine/config/did/
+            current_file = Path(__file__).resolve()
+            # Go up from src/ to engine/, then to config/did/
+            engine_dir = current_file.parent.parent  # engine/src -> engine/
+            potential_config_dir = engine_dir / 'config' / 'did'
+            
+            # If the relative path doesn't exist, try the engine-relative path
+            if not self.config_dir.exists() and potential_config_dir.exists():
+                self.config_dir = potential_config_dir
+                logging.info("Using engine-relative config directory: %s", self.config_dir)
+            else:
+                # Make it absolute based on current working directory
+                self.config_dir = self.config_dir.resolve()
+        
         # Ensure directory exists
         self.config_dir.mkdir(parents=True, exist_ok=True)
         
         # Cache for loaded configurations
         self._config_cache: Dict[str, Dict[str, Any]] = {}
         
-        logging.info("DID Config Loader initialized: %s", self.config_dir)
+        logging.info("DID Config Loader initialized: %s (absolute: %s)", self.config_dir, self.config_dir.is_absolute())
     
     def _normalize_did(self, did: str) -> str:
         """
@@ -76,30 +94,48 @@ class DIDConfigLoader:
         3. default.json (fallback)
         
         Args:
-            did: DID number
+            did: DID number (the destination number being called)
             
         Returns:
             Path to config file or None if not found
         """
         normalized_did = self._normalize_did(did)
         
+        logging.info("🔍 Searching for DID config file:")
+        logging.info("   Original DID: %s", did)
+        logging.info("   Normalized DID: %s", normalized_did)
+        logging.info("   Config directory: %s", self.config_dir)
+        
+        # List available config files for debugging
+        available_files = list(self.config_dir.glob("*.json"))
+        if available_files:
+            logging.info("   Available config files: %s", [f.name for f in available_files])
+        else:
+            logging.warning("   No JSON config files found in %s", self.config_dir)
+        
         # Try exact DID match
         exact_path = self.config_dir / f"{did}.json"
+        logging.info("   Trying: %s (exists: %s)", exact_path.name, exact_path.exists())
         if exact_path.exists():
+            logging.info("✅ Found exact match: %s", exact_path.name)
             return exact_path
         
         # Try normalized DID match
         if normalized_did and normalized_did != did:
             normalized_path = self.config_dir / f"{normalized_did}.json"
+            logging.info("   Trying normalized: %s (exists: %s)", normalized_path.name, normalized_path.exists())
             if normalized_path.exists():
+                logging.info("✅ Found normalized match: %s", normalized_path.name)
                 return normalized_path
         
         # Try default fallback
         default_path = self.config_dir / "default.json"
+        logging.info("   Trying default: %s (exists: %s)", default_path.name, default_path.exists())
         if default_path.exists():
-            logging.info("Using default.json for DID: %s", did)
+            logging.warning("⚠️  Using default.json for DID: %s (no specific config found)", did)
             return default_path
         
+        logging.error("❌ No config file found (not even default.json)")
         return None
     
     def load_config(self, did: str) -> Dict[str, Any]:

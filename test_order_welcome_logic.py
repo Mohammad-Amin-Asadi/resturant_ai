@@ -77,7 +77,7 @@ def test_order_checking_logic():
     
     def build_welcome_message(has_order, order=None):
         """Build welcome message based on order status"""
-        base_greeting = "سلام و درود بر شما، با رستوران بزرگمهر تماس گرفته‌اید."
+        base_greeting = " درودبرشما، با رستوران بزرگمهر تماس گرفته‌اید."
         
         if has_order and order:
             # Has undelivered order - report status

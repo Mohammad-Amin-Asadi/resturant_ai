@@ -2,7 +2,7 @@ from django.urls import path
 
 from Reservation_Module.views import (
     OrderListView, CustomerListView, AddOrderView, MenuAPIView,
-    OrderTrackingView, CustomerInfoView, update_order_status, delete_order
+    OrderTrackingView, CustomerInfoView, update_order_status, delete_order, delete_customer
 )
 
 urlpatterns = [
@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/orders/', AddOrderView.as_view(), name='api_add_order'),
     path('api/orders/track/', OrderTrackingView.as_view(), name='api_track_order'),
     path('api/customers/info/', CustomerInfoView.as_view(), name='api_customer_info'),
+    path('api/customers/<int:customer_id>/delete/', delete_customer, name='api_delete_customer'),
     path('api/orders/<int:order_id>/status/', update_order_status, name='api_update_status'),
     path('api/orders/<int:order_id>/delete/', delete_order, name='api_delete_order'),
 ]

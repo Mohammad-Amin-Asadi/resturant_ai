@@ -49,8 +49,8 @@ For each restaurant/DID number, create a JSON file named after the DID:
     "model": "gpt-realtime-2025-08-28",
     "voice": "alloy",
     "temperature": 0.8,
-    "welcome_message": "سلام و درود بر شما، با رستوران بزرگمهر تماس گرفته‌اید.",
-    "intro": "سلام و درود بر شما، با رستوران بزرگمهر تماس گرفته‌اید."
+    "welcome_message": "سلام و درودبرشما، با رستوران بزرگمهر تماس گرفته‌اید.",
+    "intro": "سلام و درودبرشما، با رستوران بزرگمهر تماس گرفته‌اید."
   },
   
   "soniox": {
