@@ -54,7 +54,8 @@ class Call():  # pylint: disable=too-many-instance-attributes
                  flavor: str,
                  to: str,
                  cfg,
-                 from_number=None):
+                 from_number=None,
+                 did_number=None):
         host_ip = rtp_cfg.get('bind_ip', 'RTP_BIND_IP', '0.0.0.0')
         try:
             hostname = socket.gethostbyname(socket.gethostname())
@@ -66,6 +67,7 @@ class Call():  # pylint: disable=too-many-instance-attributes
         self.b2b_key = b2b_key
         self.mi_conn = mi_conn
         self.from_number = from_number  # Store caller's phone number
+        self.did_number = did_number  # Store DID number (the number being called)
 
         if hasattr(sdp, 'media') and sdp.media and len(sdp.media) > 0:
             if hasattr(sdp.media[0], 'host') and sdp.media[0].host:

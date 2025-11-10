@@ -156,16 +156,58 @@ class Command(BaseCommand):
             {'name': 'دوغ کوچک عالیس', 'category': 'پیش‌غذا', 'original_price': 15000, 'final_price': 15000, 'discount_percent': 0},
         ]
 
-        self.stdout.write('Clearing existing menu items...')
-        MenuItem.objects.all().delete()
-
-        self.stdout.write('Populating menu items...')
+        self.stdout.write('Updating menu items...')
         created_count = 0
+        updated_count = 0
+        
+        # First, fix common name issues (e.g., "تَه‌چین مَرغ" -> "تَه‌چین مرغ")
+        name_fixes = {
+            'تَه‌چین مَرغ': 'تَه‌چین مرغ',  # Remove اعراب from ر in مرغ
+            'ته‌چین مَرغ': 'تَه‌چین مرغ',  # Also handle without اعراب on ت
+        }
+        for old_name, new_name in name_fixes.items():
+            try:
+                items = MenuItem.objects.filter(name=old_name)
+                if items.exists():
+                    # Check if new_name already exists
+                    existing_new = MenuItem.objects.filter(name=new_name)
+                    if existing_new.exists():
+                        # If new_name exists, delete the old ones (they're duplicates)
+                        items.delete()
+                        self.stdout.write(f'Removed duplicate: "{old_name}" (correct name "{new_name}" already exists)')
+                    else:
+                        # Update old name to new name
+                        items.update(name=new_name)
+                        self.stdout.write(f'Fixed: "{old_name}" -> "{new_name}"')
+            except Exception as e:
+                self.stdout.write(self.style.WARNING(f'Error fixing name "{old_name}": {e}'))
+        
         for item_data in menu_data:
-            MenuItem.objects.create(**item_data)
-            created_count += 1
+            item_name = item_data['name']
+            # Try to find existing item by name
+            items = MenuItem.objects.filter(name=item_name)
+            if items.exists():
+                # If multiple items found, update all of them (can't delete due to foreign keys)
+                if items.count() > 1:
+                    self.stdout.write(self.style.WARNING(f'Multiple items found for "{item_name}" ({items.count()} items), updating all'))
+                    for existing_item in items:
+                        for key, value in item_data.items():
+                            setattr(existing_item, key, value)
+                        existing_item.save()
+                    updated_count += items.count()
+                else:
+                    existing_item = items.first()
+                    # Update existing item
+                    for key, value in item_data.items():
+                        setattr(existing_item, key, value)
+                    existing_item.save()
+                    updated_count += 1
+            else:
+                # Create new item
+                MenuItem.objects.create(**item_data)
+                created_count += 1
 
-        self.stdout.write(self.style.SUCCESS(f'Successfully created {created_count} menu items'))
+        self.stdout.write(self.style.SUCCESS(f'Successfully created {created_count} new menu items and updated {updated_count} existing items'))
         
         # Show category breakdown
         categories = MenuItem.objects.values('category').distinct()

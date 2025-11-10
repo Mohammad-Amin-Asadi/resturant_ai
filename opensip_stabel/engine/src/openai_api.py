@@ -5,7 +5,7 @@ OpenAI Realtime + Soniox RT (Persian) bridge
 - Sends finalized Persian text to OpenAI Realtime
 - Streams OpenAI TTS audio back (G.711) into RTP queue
 - Step-by-step FLOW logs so you can see the full path
-- Fallback: if Soniox unavailable, auto-enable OpenAI Whisper and forward audio
+- ONLY Soniox is used for STT - no Whisper fallback
 """
 
 import sys
@@ -30,6 +30,7 @@ except Exception:
 import re
 from api_sender import API
 from phone_normalizer import normalize_phone_number
+from did_config import load_did_config, get_did_config_loader
 import os
 import audioop
 try:
@@ -40,7 +41,7 @@ except ImportError:
 
 # دریافت آدرس سرور از environment variable
 BACKEND_SERVER_URL = os.getenv("BACKEND_SERVER_URL", "http://localhost:8000")
-api = API(BACKEND_SERVER_URL)
+# API instance will be created per-call with DID-specific backend URL if needed
 
 # ---- Ensure logs appear in the engine container ----
 logging.basicConfig(
@@ -64,8 +65,81 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         self.ws = None
         self.session = None
 
+        # === Load DID-specific configuration ===
+        did_number = getattr(call, 'did_number', None)
+        did_config = {}
+        if did_number:
+            logging.info("🔧 Loading DID-specific config for: %s", did_number)
+            did_config = load_did_config(did_number)
+            if did_config:
+                logging.info("✅ DID config loaded: %s", list(did_config.keys()))
+            else:
+                logging.warning("⚠️  No DID config found for %s, using defaults", did_number)
+        else:
+            logging.info("ℹ️  No DID number available, using default config")
+
         # === config ===
-        self.cfg = Config.get("openai", cfg)
+        # Merge DID config with base config (DID config takes precedence)
+        base_cfg = Config.get("openai", cfg)
+        
+        # Create merged config: base config + DID-specific overrides
+        merged_cfg_dict = dict(base_cfg)
+        if did_config:
+            # Merge DID config into base config (DID values override base)
+            if 'openai' in did_config:
+                merged_cfg_dict.update(did_config['openai'])
+            # Also merge top-level keys that might be OpenAI-specific
+            for key in ['model', 'voice', 'temperature', 'welcome_message', 'intro']:
+                if key in did_config:
+                    merged_cfg_dict[key] = did_config[key]
+        
+        # Create a ConfigSection-like object for merged config
+        class MergedConfigSection:
+            def __init__(self, base_section, did_overrides):
+                self._base = base_section
+                self._overrides = did_overrides
+                
+            def get(self, option, env=None, fallback=None):
+                # Check DID overrides first
+                if isinstance(option, list):
+                    for opt in option:
+                        if opt in self._overrides:
+                            return self._overrides[opt]
+                    # Try base config
+                    return self._base.get(option, env, fallback)
+                else:
+                    if option in self._overrides:
+                        return self._overrides[option]
+                    # Try base config
+                    return self._base.get(option, env, fallback)
+            
+            def getboolean(self, option, env=None, fallback=None):
+                val = self.get(option, env, None)
+                if val is None:
+                    return fallback
+                if isinstance(val, bool):
+                    return val
+                if isinstance(val, str):
+                    if val.isnumeric():
+                        return int(val) != 0
+                    if val.lower() in ["yes", "true", "on"]:
+                        return True
+                    if val.lower() in ["no", "false", "off"]:
+                        return False
+                return fallback
+        
+        self.cfg = MergedConfigSection(base_cfg, merged_cfg_dict)
+        
+        # Store DID config for later use
+        self.did_config = did_config
+        self.did_number = did_number
+        
+        # === Backend API URL (can be DID-specific) ===
+        backend_url = BACKEND_SERVER_URL
+        if did_config and 'backend_url' in did_config:
+            backend_url = did_config['backend_url']
+            logging.info("🔗 Using DID-specific backend URL: %s", backend_url)
+        self.api = API(backend_url)
         db_path = self.cfg.get("db_path", "OPENAI_DB_PATH", "./src/data/app.db")
         self.db = WalletMeetingDB(db_path)
 
@@ -101,7 +175,36 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             self.codec_name = "g711_ulaw"
 
         # === Soniox config & state ===
-        self.soniox_cfg = Config.get("soniox", cfg)
+        # Merge DID config for Soniox as well
+        base_soniox_cfg = Config.get("soniox", cfg)
+        soniox_overrides = {}
+        if did_config and 'soniox' in did_config:
+            soniox_overrides = did_config['soniox']
+        
+        class MergedSonioxConfig:
+            def __init__(self, base, overrides):
+                self._base = base
+                self._overrides = overrides
+            def get(self, option, env=None, fallback=None):
+                if option in self._overrides:
+                    return self._overrides[option]
+                return self._base.get(option, env, fallback)
+            def getboolean(self, option, env=None, fallback=None):
+                val = self.get(option, env, None)
+                if val is None:
+                    return fallback
+                if isinstance(val, bool):
+                    return val
+                if isinstance(val, str):
+                    if val.isnumeric():
+                        return int(val) != 0
+                    if val.lower() in ["yes", "true", "on"]:
+                        return True
+                    if val.lower() in ["no", "false", "off"]:
+                        return False
+                return fallback
+        
+        self.soniox_cfg = MergedSonioxConfig(base_soniox_cfg, soniox_overrides)
         self.soniox_enabled = bool(self.soniox_cfg.get("enabled", "SONIOX_ENABLED", True))
         # دریافت کلید از config یا environment variable
         self.soniox_key = self.soniox_cfg.get("key", "SONIOX_API_KEY")
@@ -109,7 +212,8 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         # Use better model for Persian recognition
         self.soniox_model = self.soniox_cfg.get("model", "SONIOX_MODEL", "stt-rt-preview")
         # Enhanced language hints for better Persian recognition
-        self.soniox_lang_hints = self.soniox_cfg.get("language_hints", "SONIOX_LANGUAGE_HINTS", ["fa", "fa-IR"])
+        # Soniox only accepts 'fa', not 'fa-IR'
+        self.soniox_lang_hints = self.soniox_cfg.get("language_hints", "SONIOX_LANGUAGE_HINTS", ["fa"])
         # Disable diarization for better accuracy (single speaker)
         self.soniox_enable_diar = bool(self.soniox_cfg.get("enable_speaker_diarization", "SONIOX_ENABLE_DIARIZATION", False))
         # Enable LID for better language detection
@@ -119,23 +223,36 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         self.soniox_keepalive_sec = int(self.soniox_cfg.get("keepalive_sec", "SONIOX_KEEPALIVE_SEC", 15))
         
         # Audio quality enhancement: convert G.711 to PCM and upsample for Soniox
-        # Temporarily disabled by default to avoid WebSocket connection issues
-        # Can be enabled via SONIOX_UPSAMPLE_AUDIO=true if needed
-        self.soniox_upsample = bool(self.soniox_cfg.get("upsample_audio", "SONIOX_UPSAMPLE_AUDIO", False))
+        # Enabled by default for better accuracy - converts 8kHz G.711 to 16kHz PCM
+        self.soniox_upsample = bool(self.soniox_cfg.get("upsample_audio", "SONIOX_UPSAMPLE_AUDIO", True))
+        
+        # Context phrases for better Persian recognition (common menu items and words)
+        self.soniox_context_phrases = [
+            "کباب", "کوبیده", "جوجه", "مرغ", "ته چین", "ته‌چین", "نوشابه", "کوکا", "فانتا", "خانواده",
+            "دوغ", "عالیس", "قوطی", "شیشه", "بطری", "قیمه", "خورش", "چلو", "برگ", "سلطانی",
+            "شیشلیک", "ترش", "گیلانی", "تبریزی", "اردبیلی", "مصری", "بره", "میگو", "ماهی",
+            "پیتزا", "همبرگر", "چیزبرگر", "سیب زمینی", "پاستا", "سالاد", "سزار", "ماست",
+            "نیمرو", "املت", "تخم مرغ", "سوسیس", "هات داگ", "کره", "پنیر", "مربا",
+            "یک", "دو", "سه", "چهار", "پنج", "کوچک", "بزرگ", "خانواده", "مخصوص",
+            "بدون", "گوجه", "خیارشور", "پیاز", "برشته", "خوب"
+        ]
         self._soniox_audio_buffer = b''  # Buffer for audio conversion
 
         self.soniox_ws = None
         self.soniox_task = None
         self.soniox_keepalive_task = None
         self._soniox_accum = []
+        self._soniox_flush_timer = None  # Timer for delayed flush after silence
+        self.soniox_silence_duration_ms = int(self.soniox_cfg.get("silence_duration_ms", "SONIOX_SILENCE_DURATION_MS", 500))  # 1.2 seconds
+        self._order_confirmed = False  # Track if final order confirmation has been done
 
         # Optional: also forward mic audio to OpenAI (usually unnecessary)
         self.forward_audio_to_openai = bool(
             self.soniox_cfg.get("forward_audio_to_openai", "FORWARD_AUDIO_TO_OPENAI", False)
         )
 
-        # Track whether we enabled fallback Whisper on OpenAI
-        self._fallback_whisper_enabled = False
+        # Soniox is the ONLY STT engine - no fallback to Whisper
+        # If Soniox fails, the system will log errors but not use Whisper
 
     # ---------------------- date/time helpers (unchanged) ----------------------
     def _to_ascii_digits(self, s: str) -> str:
@@ -399,7 +516,7 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             
             # First, try to get customer name from Customer table (persists even after orders are deleted)
             try:
-                customer_info = await api.get_customer_info(normalized_phone)
+                customer_info = await self.api.get_customer_info(normalized_phone)
                 if customer_info.get("success") and customer_info.get("customer"):
                     self.customer_name_from_history = customer_info["customer"].get("name")
                     if self.customer_name_from_history:
@@ -408,7 +525,7 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 logging.debug("  Could not get customer info from Customer table: %s", e)
             
             # Track orders
-            result = await api.track_order(normalized_phone)
+            result = await self.api.track_order(normalized_phone)
             
             if not result or not result.get("success"):
                 logging.warning("⚠️  Failed to check orders: %s", result.get("message", "Unknown error"))
@@ -492,6 +609,125 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             all_except_last = "، ".join(formatted_items[:-1])
             return f"{all_except_last} و {formatted_items[-1]}"
 
+    def _get_scenario_config(self, scenario_type):
+        """
+        Get scenario configuration from DID config or use defaults.
+        
+        Args:
+            scenario_type: 'has_orders' or 'new_customer'
+            
+        Returns:
+            Dictionary with scenario configuration
+        """
+        if not self.did_config:
+            return {}
+        
+        scenarios = self.did_config.get('scenarios', {})
+        return scenarios.get(scenario_type, {})
+    
+    def _get_function_definitions(self):
+        """
+        Get function definitions from DID config or use defaults.
+        
+        Returns:
+            List of function definition dictionaries
+        """
+        # Default function definitions
+        default_functions = [
+            {"type": "function", "name": "terminate_call",
+             "description": "ONLY call this function when the USER explicitly says they want to end the call. "
+                            "Examples: 'خداحافظ', 'بای', 'تماس رو قطع کن', 'تماس رو پایان بده', 'خداحافظی', 'خداحافظی می‌کنم'. "
+                            "DO NOT call this if: user is silent, user says '.', user pauses, or you just finished talking. "
+                            "ONLY call when user EXPLICITLY requests to end the call. "
+                            "Always say a friendly goodbye first, then call this function.",
+             "parameters": {"type": "object", "properties": {}, "required": []}},
+            {"type": "function", "name": "transfer_call",
+             "description": "call the function if a request was received to transfer a call with an operator, a person",
+             "parameters": {"type": "object", "properties": {}, "required": []}},
+            {
+                "type": "function",
+                "name": "track_order",
+                "description": "پیگیری سفارش بر اساس شماره تلفن. شماره تلفن خودکار است.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "phone_number": {"type": "string", "description": "شماره تلفن مشتری برای پیگیری سفارش (اختیاری - اگر ارائه نشود از شماره تماس‌گیرنده استفاده می‌شود)"},
+                    },
+                    "required": [],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "type": "function",
+                "name": "get_menu_specials",
+                "description": "دریافت پیشنهادات ویژه رستوران.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False
+                }
+            },
+            {
+                "type": "function",
+                "name": "search_menu_item",
+                "description": "جستجوی غذا در منو. اگر نام دقیق موجود نبود، نزدیک‌ترین را پیدا می‌کند.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "item_name": {"type": "string", "description": "نام غذا یا کلمه کلیدی برای جستجو"},
+                        "category": {"type": "string", "description": "دسته‌بندی غذا (اختیاری): غذای ایرانی، نوشیدنی، فست فود، سینی ها، صبحانه، پیش غذا", "nullable": True},
+                    },
+                    "required": ["item_name"],
+                    "additionalProperties": False
+                }
+            },
+            {
+                "type": "function",
+                "name": "create_order",
+                "description": "ثبت سفارش نهایی. فقط یکبار در آخر تماس و بعد از مرور و تایید کاربر. قبل از صدا زدن: customer_name و address موجود، items خالی نیست، همه غذاها و تعدادها درست، notes ثبت شده. شماره تلفن خودکار است.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "customer_name": {"type": "string", "description": "نام مشتری (الزامی - نباید خالی باشد)"},
+                        "phone_number": {"type": "string", "description": "شماره تلفن مشتری (اختیاری - به صورت خودکار از تماس گرفته می‌شود)"},
+                        "address": {"type": "string", "description": "آدرس تحویل سفارش (الزامی - نباید خالی باشد)"},
+                        "items": {
+                            "type": "array",
+                            "description": "لیست آیتم‌های سفارش شامل نام غذا و تعداد (الزامی - نباید خالی باشد، باید حداقل یک غذا داشته باشد). خیلی مهم: 1) همه غذاهایی که کاربر گفت باید در این لیست باشند، 2) تعداد (quantity) هر غذا باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد).",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "item_name": {"type": "string", "description": "نام دقیق غذا از منو"},
+                                    "quantity": {"type": "integer", "description": "تعداد دقیق غذا - باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد). اگر کاربر تعداد نگفت، مقدار پیش‌فرض 1 است.", "minimum": 1, "default": 1}
+                                },
+                                "required": ["item_name", "quantity"],
+                            }
+                        },
+                        "notes": {"type": "string", "description": "توضیحات سفارش (اختیاری) - هرگونه درخواست خاص مشتری درباره سفارش، مثلا: 'ممنون میشم اگر گوجه و خیارشور نداشته باشه ساندویچم'، 'بدون پیاز لطفا'، 'کباب را خوب برشته کنید' و غیره. اگر کاربر درخواست خاصی درباره سفارش داد، حتما در این فیلد ثبت کن.", "nullable": True},
+                    },
+                    "required": ["customer_name", "address", "items"],
+                    "additionalProperties": False
+                }
+            },
+        ]
+        
+        # If DID config has custom function definitions, use them
+        if self.did_config and 'functions' in self.did_config:
+            custom_functions = self.did_config['functions']
+            if isinstance(custom_functions, list):
+                logging.info("🔧 Using custom function definitions from DID config (%d functions)", len(custom_functions))
+                return custom_functions
+            elif isinstance(custom_functions, dict):
+                # If it's a dict, merge with defaults (override matching names)
+                function_map = {f['name']: f for f in default_functions}
+                for func in custom_functions.values():
+                    if isinstance(func, dict) and 'name' in func:
+                        function_map[func['name']] = func
+                logging.info("🔧 Merged custom function definitions from DID config")
+                return list(function_map.values())
+        
+        return default_functions
+    
     def _build_welcome_message(self, has_undelivered_order, orders=None):
         """
         Build welcome message based on order status.
@@ -499,11 +735,27 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         When orders exist, includes full order details for ALL orders.
         Uses customer name from history if available (with 'عزیز' suffix).
         """
+        # Get restaurant name from DID config or use default
+        restaurant_name = self.did_config.get('restaurant_name', 'رستوران بزرگمهر') if self.did_config else 'رستوران بزرگمهر'
+        
+        # Get welcome message templates from DID config
+        welcome_config = self._get_scenario_config('has_orders' if has_undelivered_order else 'new_customer')
+        welcome_templates = welcome_config.get('welcome_templates', {})
+        
         # Use customer name from history if available
         if self.customer_name_from_history:
-            base_greeting = f"سلام و درود بر شما {self.customer_name_from_history} عزیز، با رستوران بزرگمهر تماس گرفته‌اید"
+            # Try custom template with name, fallback to default
+            base_greeting_template = welcome_templates.get('with_customer_name', 
+                "سلام و درود بر شما {customer_name} عزیز، با {restaurant_name} تماس گرفته‌اید")
+            base_greeting = base_greeting_template.format(
+                customer_name=self.customer_name_from_history,
+                restaurant_name=restaurant_name
+            )
         else:
-            base_greeting = "سلام و درود بر شما، با رستوران بزرگمهر تماس گرفته‌اید"
+            # Try custom template without name, fallback to default
+            base_greeting_template = welcome_templates.get('without_customer_name',
+                "سلام و درود بر شما، با {restaurant_name} تماس گرفته‌اید")
+            base_greeting = base_greeting_template.format(restaurant_name=restaurant_name)
         
         if has_undelivered_order and orders and len(orders) > 0:
             # Has undelivered orders - report ALL orders
@@ -550,19 +802,47 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 orders_text = "، ".join(order_details_list[:-1]) + f" و همچنین {order_details_list[-1]}"
             
             # Join greeting and order details, then add closing
+            # Get closing message from config or use default
+            closing_message = welcome_templates.get('closing_with_orders',
+                " از صبر و شکیبایی شما متشکریم. اگر امر دیگری هست در خدمت شما هستم.")
             full_message = f"{base_greeting}، {orders_text}."
-            full_message += " از صبر و شکیبایی شما متشکریم. اگر امر دیگری هست در خدمت شما هستم."
+            full_message += closing_message
             
             return full_message
         else:
             # No undelivered orders - ask if they want to order
-            return f"{base_greeting}. آیا می‌خواهید سفارش جدیدی ثبت کنید؟"
+            # Get new customer message from config or use default
+            new_customer_message = welcome_templates.get('new_customer_question',
+                " آیا می‌خواهید سفارش جدیدی ثبت کنید؟")
+            return f"{base_greeting}.{new_customer_message}"
 
     def _build_customized_instructions(self, has_undelivered_order, orders=None):
         """
         Build customized instructions based on call context.
         Different scenarios for different call situations.
+        Loads from DID config if available, otherwise uses defaults.
         """
+        # Get base instructions from DID config or use defaults
+        if self.did_config:
+            base_instructions_template = self.did_config.get('instructions_base',
+                "شما دستیار هوشمند رستوران هستید. "
+                "فقط فارسی صحبت کنید. لحن: گرم، پرانرژی، مودب، حرفه‌ای. "
+                "از 'شما' استفاده کنید، نه 'تو'. به جنسیت اشاره نکنید (آقا/خانم). "
+                "{name_instruction}"
+                "شماره تلفن خودکار است، نپرسید. "
+                "اگر کلمه‌ای شبیه نام غذا بود، آن را پیشنهاد دهید (مثلا: 'کووید' → 'کوبیده فرمودید؟'). "
+                "تماس را فقط با صراحت کاربر قطع کنید (خداحافظ، بای، قطع کن). سکوت به معنای پایان نیست.")
+        else:
+            base_instructions_template = (
+                "شما دستیار هوشمند رستوران بزرگمهر هستید. "
+                "فقط فارسی صحبت کنید. لحن: گرم، پرانرژی، مودب، حرفه‌ای. "
+                "از 'شما' استفاده کنید، نه 'تو'. به جنسیت اشاره نکنید (آقا/خانم). "
+                "{name_instruction}"
+                "شماره تلفن خودکار است، نپرسید. "
+                "اگر کلمه‌ای شبیه نام غذا بود، آن را پیشنهاد دهید (مثلا: 'کووید' → 'کوبیده فرمودید؟'). "
+                "تماس را فقط با صراحت کاربر قطع کنید (خداحافظ، بای، قطع کن). سکوت به معنای پایان نیست."
+            )
+        
         # Add customer name instruction if available
         name_instruction = ""
         if self.customer_name_from_history:
@@ -570,110 +850,95 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         else:
             name_instruction = "اگر مشتری قبلا سفارش نداده، نام مشتری را بپرس. "
         
-        base_instructions = (
-            "با لحنی گرم و پر انرژی صحبت کن "
-            "فقط و فقط فارسی صحبت کن ، به هیچ زبان دیگه ای بجز فارسی صحبت نکن."
-            " تو یک دستیار هوشمند رستوران بزرگمهر هستی. همیشه حرفه‌ای و مودب و بااحترام و پر انرژی و شاد حرف میزنی . "
-            "همیشه با لحن مودب و با احترام و پر انرژی حرف بزن"
-            "مهم: شماره تلفن مشتری به صورت خودکار از تماس گرفته می‌شود و نیازی به پرسیدن آن نیست. "
-            f"{name_instruction}"
-            "همیشه طبیعی و دوستانه صحبت کن."
-            " به هیچ وجه اشاره ای به جنسیت شخص نکن  (مثل خطاب کردن و گفتن آقا یا خانم)"
-            "کاربر از تو چیزی خارج از سفارش نمیپرسه ، پس اگر موقع انتخاب غذاها چیزی شنیدی که انگار مرتبط با غذا نیست بررسی کن ببین شبیه ترین چیز به یکی از اسم های غذا چی بود بعد یکی از غذاها رو در نظر بگیر و ازش بپرس که آیا منظورش این بود یا نه . مثلا اگر کاربر کفت کووید میخواستم ، بگو کوبیده  فرمودین ؟ فقط اگر چیزی گفت که اسم غذا نبود مستقیما."
-            "با مشتری حرفه ای و با لحن احترام سخن بگو و با تو خطاب نکن ، همیشه از کلمه ی شما استفاده کن"
-            "خیلی مهم: هیچ وقت تماس را قطع نکن مگر اینکه کاربر صریحا و واضحا بگوید که می‌خواهد تماس را تمام کند (مثل خداحافظ، بای، تماس رو قطع کن، تماس رو پایان بده). "
-            "اگر کاربر فقط سکوت کرد یا چیزی مثل '.' گفت، این به معنای پایان تماس نیست. منتظر بمان و بپرس آیا کار دیگری هست یا نه. "
-            "هیچ وقت در وسط صحبت خودت تماس را قطع نکن. همیشه منتظر بمان تا کاربر بگوید که می‌خواهد تماس را تمام کند."
-        )
+        # Format base instructions with name instruction
+        base_instructions = base_instructions_template.format(name_instruction=name_instruction)
+        
+        # Get scenario configuration
+        scenario_config = self._get_scenario_config('has_orders' if has_undelivered_order else 'new_customer')
         
         if has_undelivered_order and orders and len(orders) > 0:
             # Scenario 1: Caller has undelivered order(s)
             orders_count = len(orders)
+            
+            # Get scenario instructions template from config
             if orders_count == 1:
                 order = orders[0]
                 order_status = order.get('status', '')
                 order_id = order.get('id', '')
                 status_display = order.get('status_display', '')
                 
-                scenario_instructions = (
-                    f"وضعیت سفارش: مشتری دارای سفارش شماره {order_id} با وضعیت {status_display} است که هنوز تحویل داده نشده. "
-                    "وظیفه تو: "
-                    "1) ابتدا وضعیت سفارش را که در پیام خوش‌آمدگویی گفته شده، تایید کن و بپرس آیا سوالی درباره سفارش دارند. "
-                    "2) اگر می‌خواهند سفارش جدید ثبت کنند، به سناریوی ثبت سفارش جدید برو. "
-                    "3) اگر می‌خواهند وضعیت سفارش را دوباره بررسی کنند، می‌توانی از تابع track_order استفاده کنی (شماره تلفن به صورت خودکار استفاده می‌شود). "
-                    "4) اگر سوالی درباره زمان تحویل یا جزئیات سفارش دارند، با لحن دوستانه پاسخ بده. "
+                # Try to get template from config
+                template = scenario_config.get('single_order_template',
+                    "مشتری سفارش #{order_id} ({status_display}) دارد. "
+                    "1) وضعیت را تایید کنید و بپرسید سوالی دارند. "
+                    "2) برای سفارش جدید به سناریوی ثبت بروید. "
+                    "3) برای بررسی مجدد از track_order استفاده کنید. "
+                    "4) درباره زمان/جزئیات پاسخ دهید.")
+                
+                scenario_instructions = template.format(
+                    order_id=order_id,
+                    status_display=status_display
                 )
             else:
                 # Multiple orders
                 order_ids = [str(o.get('id', '')) for o in orders]
-                scenario_instructions = (
-                    f"وضعیت سفارش: مشتری دارای {orders_count} سفارش تحویل نشده با شماره‌های {', '.join(order_ids)} است. "
-                    "وضعیت همه سفارشات در پیام خوش‌آمدگویی گفته شده است. "
-                    "وظیفه تو: "
-                    "1) ابتدا وضعیت سفارشات را که در پیام خوش‌آمدگویی گفته شده، تایید کن و بپرس آیا سوالی درباره سفارشات دارند. "
-                    "2) اگر می‌خواهند سفارش جدید ثبت کنند، به سناریوی ثبت سفارش جدید برو. "
-                    "3) اگر می‌خواهند وضعیت سفارشات را دوباره بررسی کنند، می‌توانی از تابع track_order استفاده کنی (شماره تلفن به صورت خودکار استفاده می‌شود). "
-                    "4) اگر سوالی درباره زمان تحویل یا جزئیات سفارشات دارند، با لحن دوستانه پاسخ بده. "
+                
+                # Try to get template from config
+                template = scenario_config.get('multiple_orders_template',
+                    "مشتری {orders_count} سفارش تحویل نشده دارد: {order_ids}. "
+                    "1) وضعیت را تایید کنید و بپرسید سوالی دارند. "
+                    "2) برای سفارش جدید به سناریوی ثبت بروید. "
+                    "3) برای بررسی مجدد از track_order استفاده کنید. "
+                    "4) درباره زمان/جزئیات پاسخ دهید.")
+                
+                scenario_instructions = template.format(
+                    orders_count=orders_count,
+                    order_ids=', '.join(order_ids)
                 )
             
             # Add status-specific guidance for latest order
             latest_order = orders[0]
             order_status = latest_order.get('status', '')
+            
+            # Get status-specific messages from config
+            status_messages = scenario_config.get('status_messages', {})
+            
             if order_status in ['pending', 'confirmed']:
-                scenario_instructions += (
-                    "نکته: سفارش در حال تایید یا تایید شده است. به مشتری اطمینان بده که سفارش در حال آماده شدن است. "
-                )
+                status_msg = status_messages.get('pending',
+                    "نکته: سفارش در حال تایید یا تایید شده است. به مشتری اطمینان بده که سفارش در حال آماده شدن است. ")
+                scenario_instructions += status_msg
             elif order_status == 'preparing':
-                scenario_instructions += (
-                    "نکته: سفارش در حال آماده سازی است. به مشتری بگو که به زودی آماده می‌شود. "
-                )
+                status_msg = status_messages.get('preparing',
+                    "نکته: سفارش در حال آماده سازی است. به مشتری بگو که به زودی آماده می‌شود. ")
+                scenario_instructions += status_msg
             elif order_status == 'on_delivery':
-                scenario_instructions += (
-                    "نکته: سفارش به پیک تحویل داده شده و در راه است. به مشتری بگو که به زودی به دستش می‌رسد. "
-                )
+                status_msg = status_messages.get('on_delivery',
+                    "نکته: سفارش به پیک تحویل داده شده و در راه است. به مشتری بگو که به زودی به دستش می‌رسد. ")
+                scenario_instructions += status_msg
             
         else:
             # Scenario 2: Caller has no undelivered orders (new customer or all orders delivered)
-            scenario_instructions = (
-                "پر انرژی و گرم حرف بزن"
-                "وضعیت سفارش: مشتری سفارش تحویل نشده‌ای ندارد. "
-                "وظیفه تو: دریافت سفارش جدید. "
-                "سناریوی ثبت سفارش جدید: "
-            )
+            # Get new customer scenario template from config
+            template = scenario_config.get('new_order_template',
+                "وظیفه: دریافت سفارش جدید. "
+                "{name_instruction}"
+                "مراحل: 1) پیشنهادات ویژه (get_menu_specials) اگر درخواست شد. "
+                "2) غذاها را بگیرید؛ اگر موجود نبود با search_menu_item شبیه‌ترین را بیابید. "
+                "3) آدرس را بگیرید. "
+                "4) توضیحات (notes) را ثبت کنید: 'بدون گوجه'، 'بدون پیاز'، 'ممنون میشم اگر خیارشور نداشته باشه' و غیره. "
+                "5) همه غذاها و تعدادها را ثبت کنید: 'یک کباب و دو دوغ' → [{item_name: 'کباب', quantity: 1}, {item_name: 'دوغ', quantity: 2}]. "
+                "6) فقط یکبار در آخر تماس (قبل از ثبت) مرور و تایید بگیرید. "
+                "7) وقتی کاربر گفت 'بله ثبت کن'/'باشه'/'تایید' و همه اطلاعات کامل است، مرور کنید: 'پس سفارش شما: دو کباب، سه دوغ - درست است؟' "
+                "8) قبل از create_order: items خالی نیست، customer_name و address موجود، همه غذاها و تعدادها درست، notes ثبت شده. "
+                "9) فقط یکبار create_order را صدا بزنید.")
+            
+            name_instruction = ""
             if self.customer_name_from_history:
-                scenario_instructions += (
-                    f"1) نام مشتری ({self.customer_name_from_history}) از سفارشات قبلی در دسترس است، نیازی به پرسیدن نیست. "
-                )
+                name_instruction = f"نام ({self.customer_name_from_history}) موجود است. "
             else:
-                scenario_instructions += (
-                    "1) نام مشتری را بپرس "
-                )
-            scenario_instructions += (
-                "2) اگر کاربر درخواست کرد پیشنهادات ویژه رستوران را با get_menu_specials بگیر و بگو "
-                "3) سفارش غذای اصلی را بگیر، اگر عین آن غذا موجود نبود شبیه‌ترین را با search_menu_item بیاب و پیشنهاد بده "
-                "4) آدرس تحویل را بگیر (شماره تلفن به صورت خودکار از تماس گرفته می‌شود و نیازی به پرسیدن آن نیست)"
-                "5) خیلی خیلی مهم: وقتی کاربر چند غذا را در یک جمله می‌گوید، حتما همه را با تعداد دقیق یادداشت کن و هیچ کدام را از قلم نینداز. "
-                "   - اگر کاربر گفت 'یک کباب کوبیده و دو دوغ' باید ثبت کنی: [{item_name: 'کباب کوبیده', quantity: 1}, {item_name: 'دوغ', quantity: 2}] "
-                "   - اگر کاربر گفت 'دو کباب و سه تا نوشابه' باید ثبت کنی: [{item_name: 'کباب', quantity: 2}, {item_name: 'نوشابه', quantity: 3}] "
-                "   - اگر کاربر گفت 'سه تا کباب و دو دوغ' باید ثبت کنی: [{item_name: 'کباب', quantity: 3}, {item_name: 'دوغ', quantity: 2}] "
-                "   - هیچ وقت نباید هیچ غذایی یا تعدادش را از قلم بیندازی. همه چیزهایی که کاربر گفت با تعداد دقیق باید در لیست items باشد. "
-                "   - اگر کاربر تعداد نگفت، به صورت پیش‌فرض quantity: 1 بگذار، اما اگر گفت 'دو' یا 'سه تا' یا 'چهار' حتما همان تعداد را ثبت کن. "
-                "6) قبل از ثبت سفارش، حتما همه غذاهایی که کاربر گفته را با تعداد دقیق برایش تکرار کن تا مطمئن شوی همه را درست فهمیده‌ای. "
-                "   - لیست کامل با تعداد را بگو: 'پس سفارش شما: [مثلا: دو کباب کوبیده، سه دوغ، یک نوشابه] درست است؟' "
-                "   - حتما تعداد هر غذا را هم بگو: 'دو تا کباب، سه تا دوغ' نه فقط 'کباب و دوغ' "
-                "   - اگر کاربر تایید کرد، فقط در این صورت create_order را صدا بزن "
-                "7) خیلی مهم: قبل از صدا زدن create_order، مطمئن شو که: "
-                "   - لیست items خالی نیست (حتما حداقل یک غذا باید باشد) "
-                "   - customer_name وجود دارد "
-                "   - address وجود دارد "
-                "   - همه غذاهایی که کاربر گفت در لیست items هستند "
-                "   - تعداد هر غذا (quantity) دقیقا همان است که کاربر گفت (اگر گفت 'دو' باید quantity: 2 باشد، اگر گفت 'سه تا' باید quantity: 3 باشد) "
-                "8) اگر لیست items خالی است یا customer_name یا address نداریم، هیچ وقت create_order را صدا نزن. "
-                "   در عوض از کاربر بپرس که اطلاعات گم شده را بدهد. "
-                "9) همه موارد سفارش را تایید کن و با create_order ثبت کن. "
-                "10) خیلی مهم: فقط یک بار create_order را صدا بزن برای هر سفارش. هیچ وقت برای یک سفارش چند بار create_order را صدا نزن. "
-                "11) بعد از ثبت سفارش، اگر پیام موفقیت آمیز بود، سفارش ثبت شده است و نیازی به ثبت دوباره نیست. "
-            )
+                name_instruction = "نام را بپرسید. "
+            
+            scenario_instructions = template.format(name_instruction=name_instruction)
         
         return base_instructions + " " + scenario_instructions
 
@@ -728,93 +993,17 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             "modalities": ["text", "audio"],  # REQUIRED: Enable audio output!
             "turn_detection": {
                 "type": self.cfg.get("turn_detection_type", "OPENAI_TURN_DETECT_TYPE", "server_vad"),
-                "silence_duration_ms": int(self.cfg.get("turn_detection_silence_ms", "OPENAI_TURN_DETECT_SILENCE_MS", 300)),
+                "silence_duration_ms": int(self.cfg.get("turn_detection_silence_ms", "OPENAI_TURN_DETECT_SILENCE_MS", 500)),  # 1.2 seconds
                 "threshold": float(self.cfg.get("turn_detection_threshold", "OPENAI_TURN_DETECT_THRESHOLD", 0.6)),
                 "prefix_padding_ms": int(self.cfg.get("turn_detection_prefix_ms", "OPENAI_TURN_DETECT_PREFIX_MS", 300)),
             },
             "input_audio_format": self.get_audio_format(),   # your existing structure
             "output_audio_format": self.get_audio_format(),  # plays back via your codec parser
-            # We'll add Whisper below if Soniox is unavailable
+            # Soniox is the only STT engine - no Whisper
             "voice": self.voice,
             "temperature": float(self.cfg.get("temperature", "OPENAI_TEMPERATURE", 0.8)),
             "max_response_output_tokens": self.cfg.get("max_tokens", "OPENAI_MAX_TOKENS", "inf"),
-            "tools": [
-                {"type": "function", "name": "terminate_call",
-                 "description": "ONLY call this function when the USER explicitly says they want to end the call. "
-                                "Examples: 'خداحافظ', 'بای', 'تماس رو قطع کن', 'تماس رو پایان بده', 'خداحافظی', 'خداحافظی می‌کنم'. "
-                                "DO NOT call this if: user is silent, user says '.', user pauses, or you just finished talking. "
-                                "ONLY call when user EXPLICITLY requests to end the call. "
-                                "Always say a friendly goodbye first, then call this function.",
-                 "parameters": {"type": "object", "properties": {}, "required": []}},
-                {"type": "function", "name": "transfer_call",
-                 "description": "call the function if a request was received to transfer a call with an operator, a person",
-                 "parameters": {"type": "object", "properties": {}, "required": []}},
-                {
-                    "type": "function",
-                    "name": "track_order",
-                    "description": "پیگیری سفارش قبلی بر اساس شماره تلفن مشتری. وضعیت سفارش را برمی‌گرداند. اگر شماره تلفن ارائه نشود، شماره تماس‌گیرنده به صورت خودکار استفاده می‌شود.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "phone_number": {"type": "string", "description": "شماره تلفن مشتری برای پیگیری سفارش (اختیاری - اگر ارائه نشود از شماره تماس‌گیرنده استفاده می‌شود)"},
-                        },
-                        "required": [],
-                        "additionalProperties": False
-                    }
-                },
-                {
-                    "type": "function",
-                    "name": "get_menu_specials",
-                    "description": "دریافت لیست پیشنهادات ویژه رستوران. غذاهای ویژه و محبوب از هر دسته‌بندی را برمی‌گرداند.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "additionalProperties": False
-                    }
-                },
-                {
-                    "type": "function",
-                    "name": "search_menu_item",
-                    "description": "جستجوی یک غذا در منو. اگر نام دقیق غذا موجود نباشد، نزدیک‌ترین و مشابه‌ترین غذا را پیدا می‌کند.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "item_name": {"type": "string", "description": "نام غذا یا کلمه کلیدی برای جستجو"},
-                            "category": {"type": "string", "description": "دسته‌بندی غذا (اختیاری): غذای ایرانی، نوشیدنی، فست فود، سینی ها، صبحانه، پیش غذا", "nullable": True},
-                        },
-                        "required": ["item_name"],
-                        "additionalProperties": False
-                    }
-                },
-                {
-                    "type": "function",
-                    "name": "create_order",
-                    "description": "ثبت سفارش نهایی در سیستم. خیلی مهم: قبل از صدا زدن این تابع، مطمئن شو که: 1) customer_name وجود دارد و خالی نیست، 2) address وجود دارد و خالی نیست، 3) items لیست خالی نیست و حداقل یک غذا دارد، 4) همه غذاهایی که کاربر گفت در لیست items هستند. شماره تلفن به صورت خودکار از تماس گرفته می‌شود.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "customer_name": {"type": "string", "description": "نام مشتری (الزامی - نباید خالی باشد)"},
-                            "phone_number": {"type": "string", "description": "شماره تلفن مشتری (اختیاری - به صورت خودکار از تماس گرفته می‌شود)"},
-                            "address": {"type": "string", "description": "آدرس تحویل سفارش (الزامی - نباید خالی باشد)"},
-                            "items": {
-                                "type": "array",
-                                "description": "لیست آیتم‌های سفارش شامل نام غذا و تعداد (الزامی - نباید خالی باشد، باید حداقل یک غذا داشته باشد). خیلی مهم: 1) همه غذاهایی که کاربر گفت باید در این لیست باشند، 2) تعداد (quantity) هر غذا باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد).",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "item_name": {"type": "string", "description": "نام دقیق غذا از منو"},
-                                        "quantity": {"type": "integer", "description": "تعداد دقیق غذا - باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد). اگر کاربر تعداد نگفت، مقدار پیش‌فرض 1 است.", "minimum": 1, "default": 1}
-                                    },
-                                    "required": ["item_name", "quantity"],
-                                }
-                            },
-                            "notes": {"type": "string", "description": "یادداشت یا توضیحات اضافی (اختیاری)", "nullable": True},
-                        },
-                        "required": ["customer_name", "address", "items"],
-                        "additionalProperties": False
-                    }
-                },
-            ],
+            "tools": self._get_function_definitions(),
             "tool_choice": "auto",
         }
         # Use customized instructions instead of static ones
@@ -848,31 +1037,25 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             logging.info("FLOW STT: SONIOX enabled | model=%s | url=%s", self.soniox_model, self.soniox_url)
             ok = await self._soniox_connect()
             if ok:
-                logging.info("✅ SONIOX CONNECTED - Persian STT Active")
+                logging.info("✅ SONIOX CONNECTED - Persian STT Active (ONLY STT ENGINE)")
                 self.soniox_task = asyncio.create_task(self._soniox_recv_loop(), name="soniox-recv")
                 self.soniox_keepalive_task = asyncio.create_task(self._soniox_keepalive_loop(), name="soniox-keepalive")
             else:
-                logging.warning("FLOW STT: Soniox connect failed; enabling Whisper fallback on OpenAI")
-                await self._enable_whisper_fallback()
+                logging.error("❌ FLOW STT: Soniox connect failed - NO STT AVAILABLE (Whisper fallback disabled)")
+                logging.error("   The system will continue but speech recognition will not work until Soniox is available")
         else:
-            # Fallback: enable Whisper on OpenAI and forward audio so bot still speaks
+            # Soniox is required - no fallback
             if not soniox_key_ok:
-                logging.error("FLOW STT: SONIOX_API_KEY not set; STT fallback will be used")
+                logging.error("❌ FLOW STT: SONIOX_API_KEY not set - NO STT AVAILABLE (Whisper fallback disabled)")
             else:
-                logging.info("FLOW STT: SONIOX disabled by config; using fallback")
-            await self._enable_whisper_fallback()
+                logging.error("❌ FLOW STT: SONIOX disabled by config - NO STT AVAILABLE (Whisper fallback disabled)")
+            logging.error("   The system will continue but speech recognition will not work until Soniox is enabled")
 
         # Start consuming OpenAI events (audio out, tools, etc.)
         await self.handle_command()
 
-    async def _enable_whisper_fallback(self):
-        await self.ws.send(json.dumps({
-            "type": "session.update",
-            "session": {"input_audio_transcription": {"model": "whisper-1"}}
-        }))
-        self._fallback_whisper_enabled = True
-        self.forward_audio_to_openai = True
-        logging.info("FLOW STT: Whisper fallback enabled; audio will be forwarded to OpenAI")
+    # Whisper fallback removed - ONLY Soniox is used for STT
+    # If Soniox fails, the system will log errors but continue without STT
 
     # ---------------------- OpenAI event loop ----------------------
     async def handle_command(self):  # pylint: disable=too-many-branches
@@ -901,15 +1084,11 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     self.drain_queue()
 
             elif t == "conversation.item.input_audio_transcription.completed":
-                # IMPORTANT: when using Whisper fallback, *ask* for a response after each completed transcript
+                # Whisper fallback removed - transcripts should only come from Soniox
                 transcript = msg.get("transcript", "").rstrip()
-                logging.info("OpenAI (whisper) transcript: %s", transcript)
-                if self._fallback_whisper_enabled:
-                    await self.ws.send(json.dumps({
-                        "type": "response.create",
-                        "response": {"modalities": ["text", "audio"]}
-                    }))
-                    logging.info("FLOW TTS: response.create issued (fallback Whisper turn)")
+                if transcript:
+                    logging.warning("⚠️  Received transcript from OpenAI (should only come from Soniox): %s", transcript)
+                    # Do not process - Soniox is the only STT source
 
             elif t == "response.audio_transcript.done":
                 transcript = msg.get("transcript", "")
@@ -969,7 +1148,7 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     logging.info("  Normalized: %s", normalized_phone)
                     
                     try:
-                        result = await api.track_order(normalized_phone)
+                        result = await self.api.track_order(normalized_phone)
                         if result and result.get("success"):
                             orders = result.get("orders", [])
                             if orders:
@@ -1007,7 +1186,7 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     logging.info("⭐ GETTING MENU SPECIALS")
                     
                     try:
-                        result = await api.get_menu_specials()
+                        result = await self.api.get_menu_specials()
                         if result and result.get("success"):
                             items = result.get("items", [])
                             output = {
@@ -1043,7 +1222,7 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     logging.info("🔍 SEARCHING MENU: '%s' (category: %s)", item_name, category or "همه")
                     
                     try:
-                        result = await api.search_menu_item(item_name, category)
+                        result = await self.api.search_menu_item(item_name, category)
                         if result and result.get("success"):
                             items = result.get("items", [])
                             output = {
@@ -1183,7 +1362,7 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     logging.info("=" * 80)
                     
                     try:
-                        result = await api.create_order(
+                        result = await self.api.create_order(
                             customer_name=customer_name,
                             phone_number=normalized_phone,  # Use normalized phone
                             address=address,
@@ -1204,7 +1383,7 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                             logging.info("🔍 Verifying order creation - fetching order from database...")
                             try:
                                 # Fetch the created order to verify all items were captured
-                                verify_result = await api.track_order(normalized_phone)
+                                verify_result = await self.api.track_order(normalized_phone)
                                 if verify_result and verify_result.get("success"):
                                     all_orders = verify_result.get("orders", [])
                                     created_order = None
@@ -1258,6 +1437,9 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                             logging.info("✅ ORDER CREATED SUCCESSFULLY!")
                             logging.info("Order ID: %s", order.get('id'))
                             logging.info("Total Price: %s تومان", f"{order.get('total_price'):,}")
+                            # Mark that order confirmation has been done (only once per call)
+                            self._order_confirmed = True
+                            logging.info("✅ Order confirmation flag set - no more confirmations will be requested")
                         else:
                             output = {"success": False, "message": result.get("message", "خطا در ثبت سفارش")}
                             logging.error("❌ ORDER FAILED: %s", result.get("message"))
@@ -1333,11 +1515,39 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 "enable_language_identification": self.soniox_enable_lid,
                 "enable_endpoint_detection": self.soniox_enable_epd,
             }
+            # Note: context_phrases might not be supported in WebSocket API
+            # Removed to avoid potential errors - can be added back if confirmed supported
+            
+            # Send initialization message
             await self.soniox_ws.send(json.dumps(init))
-            logging.info("FLOW STT: Soniox init sent (fmt=%s sr=%s ch=%s hints=%s)", fmt, sr, ch, self.soniox_lang_hints)
-            return True
+            logging.info("FLOW STT: Soniox init sent (fmt=%s sr=%s ch=%s hints=%s upsampling=%s)", 
+                        fmt, sr, ch, self.soniox_lang_hints, self.soniox_upsample)
+            
+            # Wait for confirmation from Soniox (with timeout)
+            # IMPORTANT: We must read the confirmation BEFORE starting the recv_loop
+            # Otherwise the recv_loop will consume the confirmation message
+            try:
+                confirmation = await asyncio.wait_for(self.soniox_ws.recv(), timeout=5.0)
+                if isinstance(confirmation, (bytes, bytearray)):
+                    logging.warning("FLOW STT: Received binary data instead of JSON confirmation")
+                    return False
+                conf_msg = json.loads(confirmation)
+                if conf_msg.get("error_code"):
+                    error_code = conf_msg.get("error_code")
+                    error_msg = conf_msg.get("error_message", "Unknown error")
+                    logging.error("FLOW STT: Soniox init error %s: %s", error_code, error_msg)
+                    logging.error("FLOW STT: Full error response: %s", json.dumps(conf_msg, ensure_ascii=False))
+                    return False
+                logging.info("FLOW STT: Soniox initialization confirmed: %s", json.dumps(conf_msg, ensure_ascii=False))
+                return True
+            except asyncio.TimeoutError:
+                logging.warning("FLOW STT: No confirmation from Soniox within 5s, assuming OK and continuing")
+                return True
+            except Exception as e:
+                logging.warning("FLOW STT: Error waiting for confirmation: %s, assuming OK and continuing", e)
+                return True
         except Exception as e:
-            logging.error("FLOW STT: Soniox connect/init failed: %s", e)
+            logging.error("FLOW STT: Soniox connect/init failed: %s", e, exc_info=True)
             self.soniox_ws = None
             return False
 
@@ -1359,18 +1569,35 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         logging.info("FLOW STT: recv loop started")
         try:
             async for raw in self.soniox_ws:
+                # Soniox sends JSON text messages, not binary
                 if isinstance(raw, (bytes, bytearray)):
-                    # Soniox messages are JSON text; ignore binary
+                    logging.warning("FLOW STT: Received unexpected binary data, skipping")
                     continue
 
-                msg = json.loads(raw)
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError as e:
+                    logging.error("FLOW STT: Failed to parse JSON message: %s, raw: %s", e, raw[:200] if raw else "empty")
+                    continue
 
                 if msg.get("error_code"):
-                    logging.error("FLOW STT: Soniox error %s: %s", msg.get("error_code"), msg.get("error_message"))
+                    error_code = msg.get("error_code")
+                    error_msg = msg.get("error_message", "Unknown error")
+                    logging.error("FLOW STT: Soniox error %s: %s", error_code, error_msg)
+                    # Log full message for debugging
+                    logging.error("FLOW STT: Full error message: %s", json.dumps(msg, ensure_ascii=False))
                     continue
+                
+                # Log any unexpected message types for debugging
+                if "tokens" not in msg and "finished" not in msg and "error_code" not in msg:
+                    logging.debug("FLOW STT: Received message: %s", json.dumps(msg, ensure_ascii=False)[:200])
 
                 if msg.get("finished"):
                     logging.info("FLOW STT: finished marker")
+                    # Cancel any pending flush timer
+                    if self._soniox_flush_timer:
+                        self._soniox_flush_timer.cancel()
+                        self._soniox_flush_timer = None
                     await self._flush_soniox_segment()
                     break
 
@@ -1382,6 +1609,12 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                 nonfinals = [t.get("text", "") for t in tokens if not t.get("is_final")]
                 has_nonfinal = any(not t.get("is_final") for t in tokens)
                 
+                # If new non-final tokens arrive, cancel any pending flush timer (user is still speaking)
+                if nonfinals and self._soniox_flush_timer:
+                    logging.debug("FLOW STT: New audio detected, cancelling flush timer")
+                    self._soniox_flush_timer.cancel()
+                    self._soniox_flush_timer = None
+                
                 # Log partial transcripts (non-final)
                 if nonfinals:
                     logging.info("🎤 STT (partial): %s", "".join(nonfinals))
@@ -1390,8 +1623,23 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     final_text = "".join(finals)
                     logging.info("✅ STT (final): %s", final_text)
                     self._soniox_accum.append(final_text)
+                    # Cancel any existing flush timer
+                    if self._soniox_flush_timer:
+                        self._soniox_flush_timer.cancel()
+                    # Schedule flush after silence duration (0.75 seconds by default)
+                    # Only if there are no non-final tokens (user finished speaking)
+                    if not has_nonfinal:
+                        self._soniox_flush_timer = asyncio.create_task(
+                            self._delayed_flush_soniox_segment()
+                        )
+                        logging.debug("FLOW STT: Scheduled delayed flush after %dms silence", self.soniox_silence_duration_ms)
 
-                if (finals and not has_nonfinal) or any(t.get("text") == "<fin>" for t in tokens):
+                # Immediate flush for explicit finish markers
+                if any(t.get("text") == "<fin>" for t in tokens):
+                    # Cancel delayed flush if exists
+                    if self._soniox_flush_timer:
+                        self._soniox_flush_timer.cancel()
+                        self._soniox_flush_timer = None
                     await self._flush_soniox_segment()
 
         except Exception as e:
@@ -1403,6 +1651,19 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
                     logging.info("FLOW STT: Soniox WS closed (recv loop exit)")
             self.soniox_ws = None
 
+    async def _delayed_flush_soniox_segment(self):
+        """Wait for silence duration before flushing Soniox segment."""
+        try:
+            await asyncio.sleep(self.soniox_silence_duration_ms / 1000.0)
+            # Check if timer wasn't cancelled (new audio might have come in)
+            if self._soniox_flush_timer and not self._soniox_flush_timer.cancelled():
+                await self._flush_soniox_segment()
+                self._soniox_flush_timer = None
+        except asyncio.CancelledError:
+            # Timer was cancelled (new audio came in), don't flush
+            logging.debug("FLOW STT: Flush timer cancelled (new audio detected)")
+            pass
+    
     async def _flush_soniox_segment(self):
         """Forward finalized Persian transcript to OpenAI to trigger TTS."""
         if not self._soniox_accum:
@@ -1443,29 +1704,19 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
         # Send to Soniox (PCM at 16kHz for better recognition)
         try:
             if self.soniox_ws:
-                # Check if WebSocket is still open before sending
-                if self.soniox_ws.closed:
-                    logging.warning("FLOW media: Soniox WS is closed, cannot send audio")
-                    self.soniox_ws = None
-                else:
-                    await self.soniox_ws.send(processed_audio)
-                    logging.debug("FLOW media: sent %d bytes → Soniox (processed from %d bytes)", 
-                                 len(processed_audio), len(audio))
-            elif self._fallback_whisper_enabled and self.ws:
-                # if in fallback mode, audio must also go to OpenAI's input buffer
-                await self.ws.send(json.dumps({
-                    "type": "input_audio_buffer.append",
-                    "audio": base64.b64encode(audio).decode("utf-8")
-                }))
+                # Send audio as binary data (bytes) - Soniox expects raw PCM audio
+                # We'll catch exceptions if connection is closed
+                await self.soniox_ws.send(processed_audio)
+                fmt, sr, ch = self._soniox_audio_format()
+                logging.debug("FLOW media: sent %d bytes → Soniox (processed from %d bytes, format=%s sr=%s upsampling=%s)", 
+                             len(processed_audio), len(audio), fmt, sr, self.soniox_upsample)
             else:
-                logging.debug("FLOW media: Soniox WS not ready yet")
+                logging.debug("FLOW media: Soniox WS not ready yet - audio dropped (no Whisper fallback)")
         except ConnectionClosedError as e:
             logging.error("FLOW media: Soniox WS closed while sending audio: %s", e)
             self.soniox_ws = None
-            # Try to enable fallback if Soniox fails
-            if not self._fallback_whisper_enabled:
-                logging.warning("FLOW media: Soniox connection lost, enabling Whisper fallback")
-                await self._enable_whisper_fallback()
+            logging.error("❌ FLOW media: Soniox connection lost - NO STT AVAILABLE (Whisper fallback disabled)")
+            logging.error("   Audio will be dropped until Soniox reconnects")
         except Exception as e:
             error_str = str(e)
             logging.error("FLOW media: error sending audio to Soniox: %s", e)
@@ -1473,9 +1724,8 @@ class OpenAI(AIEngine):  # pylint: disable=too-many-instance-attributes
             if "1000" in error_str or "closed" in error_str.lower() or "ConnectionClosed" in str(type(e)):
                 logging.warning("FLOW media: Soniox WS connection error detected, marking as closed")
                 self.soniox_ws = None
-                if not self._fallback_whisper_enabled:
-                    logging.warning("FLOW media: Enabling Whisper fallback due to Soniox connection error")
-                    await self._enable_whisper_fallback()
+                logging.error("❌ FLOW media: Soniox connection error - NO STT AVAILABLE (Whisper fallback disabled)")
+                logging.error("   Audio will be dropped until Soniox reconnects")
 
         # (Optional) also forward to OpenAI input even when Soniox is on (generally not needed)
         if self.forward_audio_to_openai and self.ws:

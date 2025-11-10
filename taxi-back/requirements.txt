@@ -4,3 +4,5 @@ pycryptodome
 djangorestframework
 requests
 django-cors-headers
+jdatetime
+pytz

@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load jdatetime_filters %}
 
 {% block title %}
     مشتریان رستوران
@@ -107,7 +108,7 @@
                                 </svg>
                                 <strong>آخرین به‌روزرسانی:</strong>
                             </div>
-                            <div>{{ customer.updated_at|date:"Y-m-d H:i" }}</div>
+                            <div>{{ customer.updated_at|jalali_datetime }}</div>
                         </div>
                     </div>
                 </article>

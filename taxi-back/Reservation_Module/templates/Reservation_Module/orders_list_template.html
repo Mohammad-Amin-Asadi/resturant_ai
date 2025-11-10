@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% load static %}
+{% load jdatetime_filters %}
 
 {% block title %}
     سفارشات رستوران
@@ -76,7 +77,7 @@
                                 </svg>
                                 <strong>تاریخ:</strong>
                             </div>
-                            <div>{{ order.order_date|date:"Y-m-d H:i" }}</div>
+                            <div>{{ order.order_date|jalali_datetime }}</div>
                         </div>
                         
                         <div class="row items-row">
@@ -178,9 +179,9 @@
                         {% if order.notes %}
                         <div class="row">
                             <div class="label">
-                                <strong>یادداشت:</strong>
+                                <strong>توضیحات سفارش:</strong>
                             </div>
-                            <div>{{ order.notes }}</div>
+                            <div class="order-notes">{{ order.notes }}</div>
                         </div>
                         {% endif %}
                     </div>

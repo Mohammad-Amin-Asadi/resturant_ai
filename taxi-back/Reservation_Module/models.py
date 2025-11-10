@@ -1,4 +1,6 @@
 from django.db import models
+from django.utils import timezone
+from .jdatetime_utils import get_tehran_now, datetime_to_jdatetime
 
 
 class Customer(models.Model):
@@ -38,6 +40,24 @@ class Customer(models.Model):
             if addr and addr not in addresses:  # Avoid duplicates
                 addresses.append(addr)
         return addresses
+    
+    def save(self, *args, **kwargs):
+        """Override save to ensure dates are in Tehran timezone"""
+        # Ensure created_at and updated_at are in Tehran timezone
+        if not self.pk:  # New object
+            self.created_at = get_tehran_now()
+        self.updated_at = get_tehran_now()
+        super().save(*args, **kwargs)
+    
+    @property
+    def created_at_jalali(self):
+        """Get created_at as jdatetime (Persian calendar)"""
+        return datetime_to_jdatetime(self.created_at)
+    
+    @property
+    def updated_at_jalali(self):
+        """Get updated_at as jdatetime (Persian calendar)"""
+        return datetime_to_jdatetime(self.updated_at)
 
 
 class MenuItem(models.Model):
@@ -120,7 +140,12 @@ class Order(models.Model):
         return total
     
     def save(self, *args, **kwargs):
-        """Auto-link to Customer if phone_number matches"""
+        """Auto-link to Customer if phone_number matches and ensure order_date is in Tehran timezone"""
+        # Ensure order_date is in Tehran timezone
+        if not self.pk:  # New object
+            self.order_date = get_tehran_now()
+        
+        # Auto-link to Customer if phone_number matches
         if not self.customer and self.phone_number:
             try:
                 customer = Customer.objects.get(phone_number=self.phone_number)
@@ -129,6 +154,11 @@ class Order(models.Model):
                 # Handle case where Customer table doesn't exist or customer not found
                 pass
         super().save(*args, **kwargs)
+    
+    @property
+    def order_date_jalali(self):
+        """Get order_date as jdatetime (Persian calendar)"""
+        return datetime_to_jdatetime(self.order_date)
 
 
 class OrderItem(models.Model):

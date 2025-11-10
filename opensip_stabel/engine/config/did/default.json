@@ -1,0 +1,29 @@
+{
+  "restaurant_name": "Default Restaurant",
+  "restaurant_id": "default",
+  "description": "Default configuration used when no DID-specific config is found",
+  
+  "backend_url": "http://localhost:8000",
+  
+  "openai": {
+    "model": "gpt-realtime-2025-08-28",
+    "voice": "alloy",
+    "temperature": 0.8,
+    "welcome_message": "سلام و درود بر شما، با رستوران ما تماس گرفته‌اید. در خدمت شما هستم.",
+    "intro": "سلام و درود بر شما، با رستوران ما تماس گرفته‌اید. در خدمت شما هستم."
+  },
+  
+  "soniox": {
+    "enabled": true,
+    "model": "stt-rt-preview",
+    "language_hints": ["fa"],
+    "enable_speaker_diarization": false,
+    "enable_language_identification": true,
+    "enable_endpoint_detection": true,
+    "upsample_audio": true,
+    "silence_duration_ms": 500
+  },
+  
+  "instructions_base": "شما دستیار هوشمند رستوران هستید. فقط فارسی صحبت کنید. لحن: گرم، پرانرژی، مودب، حرفه‌ای."
+}
+

@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from Reservation_Module.models import Customer, MenuItem, Order, OrderItem, RestaurantSettings
+from Reservation_Module.jdatetime_utils import datetime_to_jdatetime, format_jdatetime
 
 
 class MenuItemSerializer(serializers.ModelSerializer):
@@ -22,12 +23,18 @@ class OrderItemSerializer(serializers.ModelSerializer):
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=False, required=False)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    order_date_jalali = serializers.SerializerMethodField()
     
     class Meta:
         model = Order
-        fields = ['id', 'customer_name', 'phone_number', 'address', 'order_date', 
+        fields = ['id', 'customer_name', 'phone_number', 'address', 'order_date', 'order_date_jalali',
                   'status', 'status_display', 'total_price', 'notes', 'items']
-        read_only_fields = ['order_date', 'total_price']
+        read_only_fields = ['order_date', 'total_price', 'order_date_jalali']
+    
+    def get_order_date_jalali(self, obj):
+        """Return order_date as Persian calendar string"""
+        jdt = datetime_to_jdatetime(obj.order_date)
+        return format_jdatetime(jdt) if jdt else None
     
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])

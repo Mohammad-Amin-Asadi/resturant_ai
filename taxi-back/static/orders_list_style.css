@@ -621,3 +621,17 @@ h1 {
     color: var(--muted);
     font-size: 1.1em;
 }
+
+/* Order Notes Styling */
+.order-notes {
+    padding: 10px 14px;
+    margin-top: 6px;
+    background: rgba(110, 243, 255, 0.08);
+    border: 1px solid rgba(110, 243, 255, 0.2);
+    border-radius: 10px;
+    color: var(--accent);
+    font-size: 0.9em;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}

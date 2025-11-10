@@ -81,6 +81,45 @@ def get_user(params):
     return to.uri.user.lower() if to.uri else None
 
 
+def get_request_uri(params):
+    """
+    Extracts the Request-URI (DID number) from SIP parameters.
+    The Request-URI is the actual number the caller dialed.
+    
+    Args:
+        params: SIP parameters dictionary
+        
+    Returns:
+        Address object with Request-URI, or None if not found
+    """
+    # Try to get Request-URI from headers (it might be in the first line or as a header)
+    if 'headers' not in params:
+        return None
+    
+    # The Request-URI might be passed as a parameter or we can extract from To header
+    # For initial INVITE, Request-URI is usually the same as To header
+    # But let's try to get it from the headers if available
+    headers = params['headers']
+    
+    # Check if there's a Request-URI line in headers
+    # Sometimes OpenSIPS passes it, sometimes we use To header as fallback
+    for line in headers.splitlines():
+        # Look for Request-URI pattern: INVITE sip:number@domain SIP/2.0
+        if line.strip().startswith('INVITE') or line.strip().startswith('sip:'):
+            # Try to parse as Request-URI
+            match = re.search(r'sip:([^@\s]+)@?([^\s]*)', line)
+            if match:
+                try:
+                    # Construct a To-like header to parse
+                    uri_str = f"sip:{match.group(1)}@{match.group(2) if match.group(2) else 'unknown'}"
+                    return Address.parse(uri_str)
+                except:
+                    pass
+    
+    # Fallback: Use To header (for initial INVITE, they're usually the same)
+    return get_to(params)
+
+
 def _dialplan_match(regex, string):
     """ Checks if a regex matches the string """
     pattern = re.compile(regex)

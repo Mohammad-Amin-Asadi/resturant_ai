@@ -108,7 +108,14 @@ def fetch_bot_config(api_url, bot):
 
 def parse_params(params):
     """ Parses paraameters received in a call """
-    logging.info("Received call params: %s", json.dumps(params))
+    # Log full params for debugging (can be verbose, so at DEBUG level)
+    logging.debug("Received call params: %s", json.dumps(params, indent=2))
+    
+    # Extract and log Request-URI (DID) early
+    request_uri = utils.get_request_uri(params)
+    if request_uri:
+        logging.info("📞 Request-URI (DID): %s", request_uri.uri if request_uri.uri else request_uri)
+    
     flavor = None
     extra_params = None
     api_url = Config.engine("api_url", "API_URL")
@@ -205,14 +212,31 @@ def handle_call(call, key, method, params):
                     logging.info(f"📞 Caller number: {caller_number}")
             
             flavor, to, cfg = parse_params(params)
-            new_call = Call(key, mi_conn, sdp, flavor, to, cfg, from_number=caller_number)
+            
+            # Extract Request-URI (DID number - the actual number dialed)
+            request_uri = utils.get_request_uri(params)
+            did_number = None
+            if request_uri and request_uri.uri:
+                did_number = request_uri.uri.user if request_uri.uri.user else None
+                if not did_number and request_uri.uri.host:
+                    # Sometimes the number is in the host part
+                    did_number = request_uri.uri.host.split('@')[0] if '@' in request_uri.uri.host else request_uri.uri.host
+            
+            # Also extract from To header for comparison
+            to_number = None
+            if to and to.uri:
+                to_number = to.uri.user if to.uri.user else None
+            
+            new_call = Call(key, mi_conn, sdp, flavor, to, cfg, from_number=caller_number, did_number=did_number)
             calls[key] = new_call
             
             logging.info("\n" + "=" * 80)
             logging.info("✅ CALL ACCEPTED")
             logging.info("Call ID: %s", key)
-            logging.info("Caller: %s", caller_number or "unknown")
-            logging.info("DID/To: %s", to)
+            logging.info("Caller (From): %s", caller_number or "unknown")
+            logging.info("DID Number (Request-URI): %s", did_number or "unknown")
+            logging.info("To Number: %s", to_number or "unknown")
+            logging.info("Full To Header: %s", to)
             logging.info("Flavor: %s", flavor)
             logging.info("=" * 80)
             
