@@ -110,6 +110,10 @@ class API:
             'کباب کوبیده': 'کَباب کُوبیده',
             'کوبیده': 'کَباب کُوبیده',
             'پرس کوبیده': 'کَباب کُوبیده',
+            
+            # زیتون → زیتون پرورده شرکتی (رایج‌ترین نوع)
+            'زیتون': 'زیتون پَرورده شِرکتی',
+            'زیتون پرورده': 'زیتون پَرورده شِرکتی',
         }
     
     async def track_order(self, phone_number: str) -> dict:
@@ -417,6 +421,26 @@ class API:
             
             # Sort by similarity score (highest first)
             matches.sort(key=lambda x: x[1], reverse=True)
+            
+            # Prioritize items: if multiple matches, prefer:
+            # 1. Items with is_special=True (if available)
+            # 2. Items with lower price (more common/standard)
+            # 3. Items with shorter names (simpler/more common)
+            if len(matches) > 1:
+                def priority_key(match):
+                    item, score = match
+                    priority = 0
+                    # Prefer special items
+                    if item.get('is_special'):
+                        priority += 1000
+                    # Prefer lower price (more common)
+                    priority -= item.get('final_price', 0) / 1000
+                    # Prefer shorter names
+                    priority += len(item.get('name', '')) * 10
+                    return priority
+                
+                # Sort by priority (highest first), then by similarity
+                matches.sort(key=lambda x: (priority_key(x), x[1]), reverse=True)
             
             # Extract items from tuples
             result_items = [item for item, score in matches]
