@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from Reservation_Module.models import Customer, MenuItem, Order, OrderItem, RestaurantSettings
+from Reservation_Module.models import (
+    Customer, MenuItem, Order, OrderItem, RestaurantSettings,
+    ReservationModel, TelephoneTaxiModel
+)
 from Reservation_Module.jdatetime_utils import datetime_to_jdatetime, format_jdatetime
 
 
@@ -73,4 +76,12 @@ class OrderSerializer(serializers.ModelSerializer):
 class RestaurantSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = RestaurantSettings
+        fields = '__all__'
+
+
+# ==================== Taxi Service Serializers ====================
+
+class ReservationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReservationModel
         fields = '__all__'

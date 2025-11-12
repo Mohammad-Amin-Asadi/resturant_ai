@@ -1,9 +1,12 @@
+"""Restaurant service URLs"""
 from django.urls import path
 
 from Reservation_Module.views import (
     OrderListView, CustomerListView, AddOrderView, MenuAPIView,
     OrderTrackingView, CustomerInfoView, update_order_status, delete_order, delete_customer
 )
+
+app_name = 'restaurant'
 
 urlpatterns = [
     # Frontend views

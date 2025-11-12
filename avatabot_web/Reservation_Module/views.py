@@ -14,10 +14,15 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from Crypto.PublicKey import RSA
 
-from Reservation_Module.models import Customer, MenuItem, Order, OrderItem, RestaurantSettings, InscriptionModel
-from Reservation_Module.serializers import (
-    MenuItemSerializer, OrderSerializer, OrderItemSerializer, RestaurantSettingsSerializer
+from Reservation_Module.models import (
+    Customer, MenuItem, Order, OrderItem, RestaurantSettings, InscriptionModel,
+    ReservationModel, TelephoneTaxiModel, TaxiStatusLog
 )
+from Reservation_Module.serializers import (
+    MenuItemSerializer, OrderSerializer, OrderItemSerializer, RestaurantSettingsSerializer,
+    ReservationSerializer
+)
+from Reservation_Module.forms import TaxiSettingsForm
 
 
 @method_decorator(ensure_csrf_cookie, name='dispatch')
@@ -372,3 +377,226 @@ class AddOrderView(APIView):
         private_key = key.export_key().decode("utf-8")
         public_key = key.publickey().export_key().decode("utf-8")
         return private_key, public_key
+
+
+# ==================== Taxi Service Views ====================
+
+from django.urls import reverse_lazy
+from django.views.generic import UpdateView
+from django.views.decorators.csrf import csrf_exempt
+
+
+class TaxiSettingView(UpdateView):
+    """Taxi service settings view"""
+    template_name = 'Reservation_Module/taxi_settings_form_template.html'
+    form_class = TaxiSettingsForm
+    success_url = reverse_lazy('taxi:reservation_list_url')
+
+    def get_context_data(self, **kwargs):
+        context = super(TaxiSettingView, self).get_context_data(**kwargs)
+        settings = TelephoneTaxiModel.objects.filter(is_active=True).first()
+        context['settings'] = settings
+        return context
+
+    def get_object(self, queryset=None):
+        return TelephoneTaxiModel.objects.filter(is_active=True).first()
+
+    def form_valid(self, form):
+        form.save()
+        return super(TaxiSettingView, self).form_valid(form)
+
+
+class TaxiReservationListView(ListView):
+    """Taxi لیست رزرو تاکسی های VIP view"""
+    template_name = 'Reservation_Module/reservations_list_template.html'
+    model = ReservationModel
+    context_object_name = 'reservations'
+
+
+class AddReservationView(APIView):
+    """Taxi reservation API endpoint"""
+    
+    def post(self, request: Request):
+        public_key = request.data.get('public_key')
+        data = request.data.get('data')
+        if not public_key or not data:
+            return Response('Public key and data are required', status=status.HTTP_400_BAD_REQUEST)
+
+        inscription = InscriptionModel.objects.filter(public_key=public_key).first()
+        if not inscription:
+            return Response('Inscription does not exist', status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            data = self.decoder(inscription.private_key, data)
+        except Exception as e:
+            return Response(f'Decryption failed: {e}', status=status.HTTP_400_BAD_REQUEST)
+
+        reservations = ReservationSerializer(data=data)
+        if reservations.is_valid():
+            reservations.save()
+            return Response("OK", status=status.HTTP_201_CREATED)
+        else:
+            return Response(reservations.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request: Request):
+        """Get public key for encryption"""
+        inscription = InscriptionModel.objects.filter(use_count__lt=15).first()
+        if inscription:
+            public_key = inscription.public_key
+            inscription.use_count += 1
+            inscription.save()
+            return Response({'public_key': public_key}, status=status.HTTP_200_OK)
+        else:
+            private_key, public_key = self.generate_keys()
+            new_inscription = InscriptionModel(
+                private_key=private_key,
+                public_key=public_key,
+                use_count=1
+            )
+            new_inscription.save()
+            return Response({'public_key': public_key}, status=status.HTTP_200_OK)
+
+    @staticmethod
+    def decoder(private_key, data: str):
+        """
+        Hybrid decoder:
+         - decode base64(JSON(package))
+         - decrypt AES key with RSA private key
+         - decrypt ciphertext with AES-GCM
+        """
+        # 1) decode wrapper base64 → JSON string
+        package_json = base64.b64decode(data)
+        package = json.loads(package_json)
+
+        # 2) decode components
+        enc_key = base64.b64decode(package['key'])
+        nonce = base64.b64decode(package['nonce'])
+        tag = base64.b64decode(package['tag'])
+        ciphertext = base64.b64decode(package['ciphertext'])
+
+        # 3) RSA decrypt the AES key
+        private_key_obj = RSA.import_key(private_key)
+        cipher_rsa = PKCS1_OAEP.new(private_key_obj)
+        sym_key = cipher_rsa.decrypt(enc_key)
+
+        # 4) AES-GCM decrypt
+        cipher_aes = AES.new(sym_key, AES.MODE_GCM, nonce=nonce)
+        plaintext = cipher_aes.decrypt_and_verify(ciphertext, tag)
+
+        return json.loads(plaintext.decode("utf-8"))
+
+    @staticmethod
+    def generate_keys():
+        key = RSA.generate(2048)
+        private_key = key.export_key().decode("utf-8")
+        public_key = key.publickey().export_key().decode("utf-8")
+        return private_key, public_key
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class UpdateTaxiStatusView(APIView):
+    """Update taxi status and log the change"""
+    
+    def post(self, request: Request, reservation_id: int):
+        try:
+            reservation = ReservationModel.objects.get(id=reservation_id)
+        except ReservationModel.DoesNotExist:
+            logging.error(f"Reservation {reservation_id} not found")
+            return Response(
+                {'success': False, 'error': 'رزرو یافت نشد'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        old_status = reservation.status
+        
+        # Try to get data from request body (JSON)
+        new_status = None
+        old_status_param = old_status
+        
+        try:
+            # First try request.data (DRF parsed)
+            if hasattr(request, 'data') and request.data:
+                new_status = request.data.get('new_status')
+                old_status_param = request.data.get('old_status', old_status)
+                logging.info(f"Got data from request.data: new_status={new_status}")
+            
+            # If not found, try parsing body directly
+            if not new_status and hasattr(request, 'body') and request.body:
+                import json
+                try:
+                    body_data = json.loads(request.body.decode('utf-8'))
+                    new_status = body_data.get('new_status')
+                    old_status_param = body_data.get('old_status', old_status)
+                    logging.info(f"Got data from request.body: new_status={new_status}")
+                except json.JSONDecodeError as e:
+                    logging.warning(f"Failed to parse JSON body: {e}")
+            
+            # Last resort: try POST data
+            if not new_status and hasattr(request, 'POST'):
+                new_status = request.POST.get('new_status')
+                old_status_param = request.POST.get('old_status', old_status)
+                logging.info(f"Got data from request.POST: new_status={new_status}")
+                
+        except Exception as e:
+            logging.error(f"Error parsing request: {e}", exc_info=True)
+        
+        logging.info(f"UpdateTaxiStatusView: Reservation {reservation_id}, Old: {old_status}, New: {new_status}, Request method: {request.method}")
+        
+        if not new_status:
+            logging.error(f"Missing new_status for reservation {reservation_id}")
+            return Response(
+                {'success': False, 'error': 'وضعیت جدید الزامی است'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        valid_statuses = [choice[0] for choice in ReservationModel.STATUS_CHOICES]
+        if new_status not in valid_statuses:
+            logging.error(f"Invalid status {new_status} for reservation {reservation_id}")
+            return Response(
+                {'success': False, 'error': f'وضعیت نامعتبر است. وضعیت‌های معتبر: {", ".join(valid_statuses)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if old_status == new_status:
+            logging.info(f"Status unchanged for reservation {reservation_id}: {new_status}")
+            return Response({
+                'success': True,
+                'message': 'وضعیت تغییر نکرده است',
+                'status': new_status
+            }, status=status.HTTP_200_OK)
+        
+        # Update reservation status
+        reservation.status = new_status
+        reservation.save()
+        logging.info(f"✅ Reservation {reservation_id} status updated: {old_status} → {new_status}")
+        
+        # Log the status change
+        try:
+            TaxiStatusLog.objects.create(
+                reservation=reservation,
+                old_status=old_status_param,
+                new_status=new_status,
+                changed_by=request.user.username if request.user.is_authenticated else 'system'
+            )
+            logging.info(f"✅ Status log created for reservation {reservation_id}")
+        except Exception as e:
+            logging.error(f"❌ Failed to create status log: {e}")
+        
+        return Response({
+            'success': True,
+            'message': f'وضعیت از {dict(ReservationModel.STATUS_CHOICES).get(old_status, old_status)} به {dict(ReservationModel.STATUS_CHOICES).get(new_status, new_status)} تغییر کرد',
+            'old_status': old_status,
+            'new_status': new_status
+        }, status=status.HTTP_200_OK)
+
+
+class DeleteReservationView(APIView):
+    """Delete taxi reservation"""
+    
+    def delete(self, request: Request, reservation_id: int):
+        try:
+            reservation = ReservationModel.objects.get(id=reservation_id)
+            reservation.delete()
+            return Response({'message': 'Reservation deleted successfully'}, status=status.HTTP_200_OK)
+        except ReservationModel.DoesNotExist:
+            return Response({'error': 'Reservation not found'}, status=status.HTTP_404_NOT_FOUND)

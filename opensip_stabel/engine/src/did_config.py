@@ -59,13 +59,13 @@ class DIDConfigLoader:
     def _normalize_did(self, did: str) -> str:
         """
         Normalize DID number for filename matching.
-        Removes common SIP URI prefixes and special characters.
+        Removes common SIP URI prefixes, country codes, and special characters.
         
         Args:
-            did: DID number (e.g., "09154211914", "sip:09154211914@domain.com")
+            did: DID number (e.g., "09154211914", "sip:09154211914@domain.com", "985191096575")
             
         Returns:
-            Normalized DID number (e.g., "09154211914")
+            Normalized DID number (e.g., "09154211914", "5191096575")
         """
         if not did:
             return ""
@@ -83,15 +83,53 @@ class DIDConfigLoader:
         else:
             normalized = "".join(c for c in did if c.isdigit())
         
+        # Remove country code 98 (Iran) if present at the start
+        # e.g., "985191096575" -> "5191096575"
+        if normalized.startswith("98") and len(normalized) > 2:
+            normalized = normalized[2:]
+        
         return normalized
+    
+    def _generate_did_variations(self, did: str) -> list:
+        """
+        Generate all possible variations of a DID number for matching.
+        
+        Args:
+            did: DID number (e.g., "985191096575", "5191096575")
+            
+        Returns:
+            List of DID variations to try (in order of preference)
+        """
+        variations = []
+        
+        # Start with original
+        variations.append(did)
+        
+        # Normalize (removes country code, etc.)
+        normalized = self._normalize_did(did)
+        if normalized != did:
+            variations.append(normalized)
+        
+        # Try with leading 0 if it doesn't have one
+        if normalized and not normalized.startswith("0") and len(normalized) >= 9:
+            with_zero = "0" + normalized
+            if with_zero not in variations:
+                variations.append(with_zero)
+        
+        # Try without leading 0 if it has one
+        if normalized and normalized.startswith("0") and len(normalized) > 1:
+            without_zero = normalized[1:]
+            if without_zero not in variations:
+                variations.append(without_zero)
+        
+        return variations
     
     def _find_config_file(self, did: str) -> Optional[Path]:
         """
         Find configuration file for a given DID number.
         Tries multiple naming patterns:
-        1. {did}.json (exact match)
-        2. {normalized_did}.json (normalized)
-        3. default.json (fallback)
+        1. All DID variations (with/without country code, with/without leading 0)
+        2. default.json (fallback)
         
         Args:
             did: DID number (the destination number being called)
@@ -99,12 +137,13 @@ class DIDConfigLoader:
         Returns:
             Path to config file or None if not found
         """
-        normalized_did = self._normalize_did(did)
-        
         logging.info("🔍 Searching for DID config file:")
         logging.info("   Original DID: %s", did)
-        logging.info("   Normalized DID: %s", normalized_did)
         logging.info("   Config directory: %s", self.config_dir)
+        
+        # Generate all possible variations
+        variations = self._generate_did_variations(did)
+        logging.info("   DID variations to try: %s", variations)
         
         # List available config files for debugging
         available_files = list(self.config_dir.glob("*.json"))
@@ -113,20 +152,13 @@ class DIDConfigLoader:
         else:
             logging.warning("   No JSON config files found in %s", self.config_dir)
         
-        # Try exact DID match
-        exact_path = self.config_dir / f"{did}.json"
-        logging.info("   Trying: %s (exists: %s)", exact_path.name, exact_path.exists())
-        if exact_path.exists():
-            logging.info("✅ Found exact match: %s", exact_path.name)
-            return exact_path
-        
-        # Try normalized DID match
-        if normalized_did and normalized_did != did:
-            normalized_path = self.config_dir / f"{normalized_did}.json"
-            logging.info("   Trying normalized: %s (exists: %s)", normalized_path.name, normalized_path.exists())
-            if normalized_path.exists():
-                logging.info("✅ Found normalized match: %s", normalized_path.name)
-                return normalized_path
+        # Try each variation in order
+        for variation in variations:
+            config_path = self.config_dir / f"{variation}.json"
+            logging.info("   Trying: %s (exists: %s)", config_path.name, config_path.exists())
+            if config_path.exists():
+                logging.info("✅ Found match: %s", config_path.name)
+                return config_path
         
         # Try default fallback
         default_path = self.config_dir / "default.json"

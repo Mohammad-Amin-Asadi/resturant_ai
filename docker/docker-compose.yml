@@ -54,13 +54,14 @@ services:
   django:
     container_name: server
     build:
-      context: ../taxi-back
+      context: ../avatabot_web
       dockerfile: Dockerfile
-    command: python manage.py runserver 0.0.0.0:5000
+    # No command - uses entrypoint.sh which starts both servers
     volumes:
-      - ../taxi-back:/app
+      - ../avatabot_web:/app
     ports:
-      - "8000:5000"
+      - "8000:5000"  # Restaurant service
+      - "8001:5001"  # Taxi service
     environment:
       # Django Security
       SECRET_KEY: ${SECRET_KEY}

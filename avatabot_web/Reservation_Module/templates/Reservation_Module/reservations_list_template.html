@@ -1,0 +1,477 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load jdatetime_filters %}
+
+{% block title %}
+    Reservations
+{% endblock %}
+
+{% block stylesheet %}
+    <link rel="stylesheet" href="{% static 'reservations_list_style.css' %}">
+{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <header>
+            <div class="brand">
+                <div class="logo" aria-hidden="true"></div>
+                <div>
+                    <h1>تاکسی VIP</h1>
+                    <div class="subtitle">لیست رزروهای تاکسی VIP</div>
+                </div>
+            </div>
+            <div class="actions">
+            </div>
+        </header>
+
+        <!-- Reservations -->
+        <section class="reservations">
+            <!-- Card 1 -->
+            {% for reservation in reservations %}
+                <article class="card" data-status="pending" style="--delay:.02s">
+                    <div class="card-head">
+                        <div style="display:flex; gap:10px; align-items:center">
+                            <div class="avatar" aria-hidden="true">
+                                <svg
+                                        width="20"
+                                        height="20"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        xmlns="http://www.w3.org/2000/svg"
+                                >
+                                    <path d="M12 12c2.761 0 5-2.239 5-5s-2.239-5-5-5-5 2.239-5 5 2.239 5 5 5Zm0 2c-4.418 0-8 2.239-8 5v2h16v-2c0-2.761-3.582-5-8-5Z"
+                                          fill="currentColor" opacity=".7"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="name">{{ reservation.user_fullname }}</div>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <div class="order-number">
+                                <strong>#{{ reservation.id }}</strong>
+                            </div>
+                            <button class="delete-reservation-btn" 
+                                    data-reservation-id="{{ reservation.id }}"
+                                    onclick="deleteReservation(this)"
+                                    title="حذف رزرو"
+                                    aria-label="حذف رزرو شماره {{ reservation.id }}">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M9 3v1H4v2h1v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6h1V4h-5V3H9zm2 2h2v1h-2V5zm-1 3v11h2V8h-2zm4 0v11h2V8h-2z" 
+                                          fill="currentColor" opacity="0.8"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="rows">
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
+                                    <path d="M12 8v5l3 3" stroke="currentColor" stroke-width="2"
+                                          stroke-linecap="round"/>
+                                </svg>
+                                <strong>تاریخ:</strong>
+                            </div>
+                            <div class="row-value" dir="ltr">{{ reservation.date_time|jalali_datetime }}</div>
+                        </div>
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M3 12l9-9 9 9-9 9-9-9Z" stroke="currentColor" stroke-width="2"/>
+                                </svg>
+                                <strong>مبدا:</strong>
+                            </div>
+                            <div class="row-value">{{ reservation.origin }}</div>
+                        </div>
+                        <div class="row">
+                            <div class="label">
+                                <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M4 7l16 0M4 12l16 0M4 17l16 0" stroke="currentColor" stroke-width="2"
+                                          stroke-linecap="round"/>
+                                </svg>
+                                <strong>مقصد:</strong>
+                            </div>
+                            <div class="row-value">{{ reservation.destination }}</div>
+                        </div>
+                        <div class="taxi-track-row">
+                            <div class="taxi-track-container" 
+                                 data-reservation-id="{{ reservation.id }}"
+                                 data-status="{% if reservation.status %}{{ reservation.status }}{% else %}to_source{% endif %}">
+                                <div class="taxi-track">
+                                    <div class="taxi-road">
+                                        <div class="road-line"></div>
+                                        <div class="road-line"></div>
+                                        <div class="road-line"></div>
+                                    </div>
+                                    <div class="taxi-marker">
+                                        <div class="taxi-icon">🚕</div>
+                                        <div class="taxi-status-tooltip"></div>
+                                    </div>
+                                    <div class="track-stops">
+                                        <div class="stop stop-source" data-stop="source" style="order: 1;">
+                                            <div class="stop-icon">📍</div>
+                                            <div class="stop-label">مبدا</div>
+                                        </div>
+                                        <div class="stop stop-destination" data-stop="destination" style="order: 2;">
+                                            <div class="stop-icon">🎯</div>
+                                            <div class="stop-label">مقصد</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </article>
+            {% endfor %}
+
+        </section>
+    </div>
+    
+    <script>
+        // Helper function to get CSRF token from cookies
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        function deleteReservation(buttonElement) {
+            console.log('🗑️ deleteReservation called');
+            const reservationId = buttonElement.dataset.reservationId;
+            const csrftoken = getCookie('csrftoken');
+            
+            console.log('📋 Reservation ID to delete:', reservationId);
+            console.log('🔑 CSRF Token:', csrftoken ? 'Present' : 'MISSING');
+            
+            if (!csrftoken) {
+                alert('خطا: توکن امنیتی یافت نشد. لطفا صفحه را رفرش کنید.');
+                location.reload();
+                return;
+            }
+            
+            // Confirm deletion
+            if (!confirm(`آیا مطمئن هستید که می‌خواهید رزرو #${reservationId} را حذف کنید؟\n\nاین عمل قابل بازگشت نیست.`)) {
+                console.log('❌ Deletion cancelled by user');
+                return;
+            }
+            
+            // Disable button during deletion
+            buttonElement.disabled = true;
+            buttonElement.style.opacity = '0.5';
+            
+            // Find the reservation card for removal
+            const reservationCard = buttonElement.closest('.card');
+            
+            fetch(`/delete-reservation/${reservationId}/`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrftoken
+                }
+            })
+            .then(response => {
+                console.log('📡 Delete response status:', response.status);
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.error || `HTTP ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('✅ Success! Reservation deleted:', data);
+                
+                // Remove the reservation card from the page with animation
+                if (reservationCard) {
+                    reservationCard.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                    reservationCard.style.opacity = '0';
+                    reservationCard.style.transform = 'translateX(-20px)';
+                    
+                    setTimeout(() => {
+                        reservationCard.remove();
+                        
+                        // Check if there are no more reservations
+                        const remainingReservations = document.querySelectorAll('.card');
+                        if (remainingReservations.length === 0) {
+                            // Reload to show "no reservations" message
+                            location.reload();
+                        }
+                    }, 300);
+                } else {
+                    // Fallback: reload page if card not found
+                    location.reload();
+                }
+            })
+            .catch(error => {
+                console.error('❌ Error deleting reservation:', error);
+                alert('خطا در حذف رزرو: ' + error.message);
+                
+                // Re-enable button
+                buttonElement.disabled = false;
+                buttonElement.style.opacity = '1';
+            });
+        }
+
+        // ============================================
+        // Taxi Tracking API Functions with Drag Support
+        // ============================================
+        
+        // Initialize drag functionality for all taxi markers
+        function initTaxiDrag() {
+            document.querySelectorAll('.taxi-marker').forEach(marker => {
+                let isDragging = false;
+                let startX = 0;
+                let startRight = 0;
+                let originalStatus = null; // Store original status before drag
+                const container = marker.closest('.taxi-track-container');
+                const track = container.querySelector('.taxi-track');
+                const reservationId = container.dataset.reservationId;
+                
+                // Prevent text selection
+                marker.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    isDragging = true;
+                    marker.classList.add('dragging');
+                    
+                    // Store original status before any changes
+                    originalStatus = container.getAttribute('data-status');
+                    console.log(`🎯 Drag started. Original status: ${originalStatus}`);
+                    
+                    // Disable transition during drag for smooth movement
+                    marker.style.transition = 'none';
+                    
+                    document.addEventListener('mousemove', handleDrag);
+                    document.addEventListener('mouseup', handleDragEnd);
+                });
+                
+                function handleDrag(e) {
+                    if (!isDragging) return;
+                    e.preventDefault();
+                    
+                    const rect = track.getBoundingClientRect();
+                    const trackWidth = rect.width;
+                    
+                    // RTL: Calculate mouse position relative to track (from right)
+                    // Mouse moving right (clientX decreasing) = moving left on track = increasing right %
+                    const mouseX = e.clientX;
+                    const relativeX = rect.right - mouseX; // Distance from right edge
+                    const percentage = Math.max(0, Math.min(100, (relativeX / trackWidth) * 100));
+                    
+                    // Update position smoothly
+                    marker.style.right = percentage + '%';
+                    marker.style.transform = 'translate(50%, -50%)';
+                    
+                    // Update tooltip status in real-time during drag
+                    // Positions: to_source=5%, at_source=25%, to_destination=70%, at_destination=95%
+                    let tempStatus;
+                    if (percentage <= 15) {
+                        tempStatus = 'to_source'; // 5% - در مسیر مبدا
+                    } else if (percentage <= 47.5) {
+                        tempStatus = 'at_source'; // 25% - در مبدا
+                    } else if (percentage <= 82.5) {
+                        tempStatus = 'to_destination'; // 70% - در مسیر مقصد
+                    } else {
+                        tempStatus = 'at_destination'; // 95% - به مقصد رسید
+                    }
+                    
+                    // Temporarily update data-status for tooltip
+                    container.setAttribute('data-status', tempStatus);
+                }
+                
+                function handleDragEnd(e) {
+                    if (!isDragging) return;
+                    isDragging = false;
+                    marker.classList.remove('dragging');
+                    
+                    // Re-enable transition for smooth snap
+                    marker.style.transition = 'right 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+                    
+                    const rect = track.getBoundingClientRect();
+                    const trackWidth = rect.width;
+                    const markerRect = marker.getBoundingClientRect();
+                    
+                    // RTL: Calculate final position from right edge
+                    const markerCenterX = markerRect.left + (markerRect.width / 2);
+                    const relativeX = rect.right - markerCenterX;
+                    const percentage = Math.max(0, Math.min(100, (relativeX / trackWidth) * 100));
+                    
+                    // Determine closest status position (RTL: right=5%, left=95%)
+                    // Positions: to_source=5%, at_source=25%, to_destination=70%, at_destination=95%
+                    let newStatus;
+                    if (percentage <= 15) {
+                        newStatus = 'to_source'; // 5% (right) - در مسیر مبدا
+                    } else if (percentage <= 47.5) {
+                        newStatus = 'at_source'; // 25% - در مبدا
+                    } else if (percentage <= 82.5) {
+                        newStatus = 'to_destination'; // 70% - در مسیر مقصد
+                    } else {
+                        newStatus = 'at_destination'; // 95% (left) - به مقصد رسید
+                    }
+                    
+                    // Use original status (before drag) for database update
+                    const oldStatusForDB = originalStatus || container.getAttribute('data-status');
+                    
+                    // Snap to exact position for the determined status
+                    const statusPositions = {
+                        'to_source': 5,
+                        'at_source': 25,
+                        'to_destination': 70,
+                        'at_destination': 95
+                    };
+                    marker.style.right = statusPositions[newStatus] + '%';
+                    
+                    // Update UI immediately
+                    container.setAttribute('data-status', newStatus);
+                    
+                    // Only save to database if status actually changed
+                    console.log(`🔄 Drag ended. Original: ${oldStatusForDB}, New: ${newStatus}`);
+                    if (newStatus !== oldStatusForDB) {
+                        console.log(`📤 Status changed from ${oldStatusForDB} to ${newStatus}, saving to database...`);
+                        // Save to database with correct old status
+                        saveStatusToDatabase(reservationId, oldStatusForDB, newStatus);
+                    } else {
+                        console.log(`ℹ️ Status unchanged (${newStatus}), skipping database update`);
+                    }
+                    
+                    // Reset original status
+                    originalStatus = null;
+                    
+                    document.removeEventListener('mousemove', handleDrag);
+                    document.removeEventListener('mouseup', handleDragEnd);
+                }
+            });
+        }
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', initTaxiDrag);
+        
+        // Make functions globally available
+        window.updateTaxiStatus = function(reservationId, status, fromDrag = false) {
+            const trackContainer = document.querySelector(`[data-reservation-id="${reservationId}"]`);
+            if (trackContainer) {
+                // Validate status
+                const validStatuses = ['to_source', 'at_source', 'to_destination', 'at_destination'];
+                if (!validStatuses.includes(status)) {
+                    console.error(`❌ Invalid status: ${status}. Valid statuses are: ${validStatuses.join(', ')}`);
+                    return false;
+                }
+                
+                const oldStatus = trackContainer.getAttribute('data-status');
+                if (oldStatus === status && !fromDrag) {
+                    return true; // No change needed
+                }
+                
+                // Update UI
+                trackContainer.setAttribute('data-status', status);
+                console.log(`✅ Taxi status updated for reservation #${reservationId}: ${oldStatus} → ${status}`);
+                
+                // Show visual feedback
+                const taxiIcon = trackContainer.querySelector('.taxi-icon');
+                if (taxiIcon) {
+                    taxiIcon.style.transform = 'scale(1.3)';
+                    setTimeout(() => {
+                        taxiIcon.style.transform = '';
+                    }, 300);
+                }
+                
+                // Save to database via API
+                if (oldStatus !== status) {
+                    saveStatusToDatabase(reservationId, oldStatus, status);
+                }
+                
+                return true;
+            } else {
+                console.warn(`⚠️ Taxi track container not found for reservation #${reservationId}`);
+                return false;
+            }
+        };
+        
+        // Save status change to database
+        function saveStatusToDatabase(reservationId, oldStatus, newStatus) {
+            const csrftoken = getCookie('csrftoken');
+            const url = `/update-taxi-status/${reservationId}/`;
+            
+            console.log(`📡 Attempting to save status to database:`);
+            console.log(`   URL: ${url}`);
+            console.log(`   Old Status: ${oldStatus}`);
+            console.log(`   New Status: ${newStatus}`);
+            console.log(`   CSRF Token: ${csrftoken ? 'Present' : 'MISSING'}`);
+            
+            // Since the view has csrf_exempt, we can try without CSRF token if missing
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+            
+            if (csrftoken) {
+                headers['X-CSRFToken'] = csrftoken;
+            }
+            
+            fetch(url, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({
+                    old_status: oldStatus,
+                    new_status: newStatus
+                }),
+                credentials: 'same-origin'
+            })
+            .then(response => {
+                console.log(`📡 Response received:`);
+                console.log(`   Status: ${response.status}`);
+                console.log(`   Status Text: ${response.statusText}`);
+                console.log(`   Headers:`, [...response.headers.entries()]);
+                
+                if (!response.ok) {
+                    // Try to get error message
+                    return response.text().then(text => {
+                        console.error(`❌ Response text: ${text}`);
+                        let errorData;
+                        try {
+                            errorData = JSON.parse(text);
+                        } catch (e) {
+                            errorData = { error: text || `HTTP ${response.status}` };
+                        }
+                        throw new Error(errorData.error || `HTTP ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log(`📦 Response data:`, data);
+                if (data.success) {
+                    console.log(`✅ Status saved to database: ${oldStatus} → ${newStatus}`);
+                    console.log(`📝 Message: ${data.message}`);
+                } else {
+                    console.error(`❌ Failed to save status: ${data.error || 'Unknown error'}`);
+                    alert(`خطا در ذخیره وضعیت: ${data.error || 'خطای ناشناخته'}`);
+                }
+            })
+            .catch(error => {
+                console.error('❌ Error saving status:', error);
+                console.error('Error details:', error.message);
+                console.error('Error stack:', error.stack);
+                alert(`خطا در ارتباط با سرور: ${error.message}`);
+            });
+        }
+        
+        // Get current taxi status
+        window.getTaxiStatus = function(reservationId) {
+            const trackContainer = document.querySelector(`[data-reservation-id="${reservationId}"]`);
+            if (trackContainer) {
+                return trackContainer.getAttribute('data-status');
+            }
+            return null;
+        };
+    </script>
+{% endblock %}

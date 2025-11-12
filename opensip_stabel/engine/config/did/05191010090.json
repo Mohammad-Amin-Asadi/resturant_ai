@@ -1,7 +1,7 @@
 {
   "restaurant_name": "رستوران بزرگمهر",
   "restaurant_id": "bozorgmehr",
-  "description": "Configuration for Bozorgmehr Restaurant (DID: 5191010090)",
+  "description": "Configuration for Bozorgmehr Restaurant (DID: 05191010090)",
   
   "backend_url": "http://localhost:8000",
   
@@ -84,7 +84,7 @@
           "phone_number": {"type": "string", "description": "شماره تلفن مشتری برای پیگیری سفارش (اختیاری - اگر ارائه نشود از شماره تماس‌گیرنده استفاده می‌شود)"}
         },
         "required": [],
-        "additionalProperties": false
+        "additionalProperties": False
       }
     },
     {
@@ -94,7 +94,7 @@
       "parameters": {
         "type": "object",
         "properties": {},
-        "additionalProperties": false
+        "additionalProperties": False
       }
     },
     {
@@ -108,7 +108,7 @@
           "category": {"type": "string", "description": "دسته‌بندی غذا (اختیاری): غذای ایرانی، نوشیدنی، فست فود، سینی ها، صبحانه، پیش غذا", "nullable": true}
         },
         "required": ["item_name"],
-        "additionalProperties": false
+        "additionalProperties": False
       }
     },
     {
@@ -136,8 +136,9 @@
           "notes": {"type": "string", "description": "اگر کاربر درخواست خاصی درباره سفارش داد، حتما در این فیلد ثبت کن.", "nullable": true}
         },
         "required": ["customer_name", "address", "items"],
-        "additionalProperties": false
+        "additionalProperties": False
       }
     }
   ]
 }
+

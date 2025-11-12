@@ -22,7 +22,7 @@
                 </div>
             </div>
             <div class="actions">
-                <a class="btn" href="{% url 'order_list_url' %}" data-tip="سفارشات">
+                <a class="btn" href="{% url 'restaurant:order_list_url' %}" data-tip="سفارشات">
                     سفارشات
                 </a>
             </div>
@@ -98,7 +98,7 @@
                             <div class="order-ids-list">
                                 {% if customer.orders.all %}
                                     {% for order in customer.orders.all %}
-                                        <a href="{% url 'order_list_url' %}#order-{{ order.id }}" 
+                                        <a href="{% url 'restaurant:order_list_url' %}#order-{{ order.id }}" 
                                            class="order-id-badge" 
                                            title="مشاهده جزئیات سفارش #{{ order.id }}"
                                            style="display: inline-block; position: relative; z-index: 100; pointer-events: auto; cursor: pointer;"
@@ -115,12 +115,13 @@
                         <div class="row">
                             <div class="label">
                                 <svg class="ico" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none"/>
                                     <path d="M12 8v5l3 3" stroke="currentColor" stroke-width="2"
                                           stroke-linecap="round"/>
                                 </svg>
                                 <strong>آخرین به‌روزرسانی:</strong>
                             </div>
-                            <div>{{ customer.updated_at|jalali_datetime }}</div>
+                            <div class="row-value" dir="ltr">{{ customer.updated_at|jalali_datetime }}</div>
                         </div>
                     </div>
                 </article>

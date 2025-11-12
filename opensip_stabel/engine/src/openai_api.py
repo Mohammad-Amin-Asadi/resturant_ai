@@ -1,5 +1,11 @@
 #!/usr/bin/env python
-"""OpenAI Realtime + Soniox RT bridge for Persian STT."""
+"""
+Unified OpenAI Realtime + Soniox RT bridge
+- Loads ALL configuration from DID-specific JSON files in config/did/
+- Supports multiple services (taxi, restaurant, etc.) simultaneously
+- No hardcoded prompts - everything loaded from JSON configs
+- Function definitions loaded from config files
+"""
 
 import sys
 import json
@@ -11,6 +17,7 @@ import contextlib
 import os
 import re
 import audioop
+import requests
 from queue import Empty
 from datetime import datetime, timedelta
 from websockets.asyncio.client import connect
@@ -46,35 +53,42 @@ OPENAI_URL_FORMAT = "wss://api.openai.com/v1/realtime?model={}"
 
 
 class OpenAI(AIEngine):
-    """OpenAI Realtime client using Soniox for STT."""
+    """Unified OpenAI Realtime client - loads all config from DID JSON files."""
 
     def __init__(self, call, cfg):
+        # === media & IO ===
         self.codec = self.choose_codec(call.sdp)
         self.queue = call.rtp
         self.call = call
         self.ws = None
         self.session = None
 
+        # === Load DID configuration ===
         did_number = getattr(call, 'did_number', None)
-        did_config = {}
+        self.did_number = did_number
         
         if did_number:
-            did_config = load_did_config(did_number)
-            if did_config:
-                logging.info("DID config loaded: %s", did_config.get('restaurant_name', 'Unknown'))
+            self.did_config = load_did_config(did_number)
+            if self.did_config:
+                logging.info("✅ DID config loaded for %s: %s", 
+                           did_number, self.did_config.get('description', 'Unknown'))
             else:
-                logging.warning("No DID config for %s, using default", did_number)
+                logging.warning("⚠️  No DID config for %s, using default", did_number)
+                self.did_config = load_did_config("default")
         else:
-            logging.warning("No DID number available, using default config")
+            logging.warning("⚠️  No DID number available, using default config")
+            self.did_config = load_did_config("default") or {}
 
+        # === Merge base config with DID config ===
         base_cfg = Config.get("openai", cfg)
         merged_cfg_dict = dict(base_cfg)
-        if did_config:
-            if 'openai' in did_config:
-                merged_cfg_dict.update(did_config['openai'])
+        if self.did_config:
+            if 'openai' in self.did_config:
+                merged_cfg_dict.update(self.did_config['openai'])
+            # Also check top-level keys
             for key in ['model', 'voice', 'temperature', 'welcome_message', 'intro']:
-                if key in did_config:
-                    merged_cfg_dict[key] = did_config[key]
+                if key in self.did_config:
+                    merged_cfg_dict[key] = self.did_config[key]
         
         class MergedConfigSection:
             def __init__(self, base_section, did_overrides):
@@ -82,17 +96,14 @@ class OpenAI(AIEngine):
                 self._overrides = did_overrides
                 
             def get(self, option, env=None, fallback=None):
-                # Check DID overrides first
                 if isinstance(option, list):
                     for opt in option:
                         if opt in self._overrides:
                             return self._overrides[opt]
-                    # Try base config
                     return self._base.get(option, env, fallback)
                 else:
                     if option in self._overrides:
                         return self._overrides[option]
-                    # Try base config
                     return self._base.get(option, env, fallback)
             
             def getboolean(self, option, env=None, fallback=None):
@@ -111,31 +122,38 @@ class OpenAI(AIEngine):
                 return fallback
         
         self.cfg = MergedConfigSection(base_cfg, merged_cfg_dict)
-        self.did_config = did_config
-        self.did_number = did_number
         
+        # === Backend API setup ===
         backend_url = BACKEND_SERVER_URL
-        if did_config and 'backend_url' in did_config:
-            backend_url = did_config['backend_url']
+        if self.did_config and 'backend_url' in self.did_config:
+            backend_url = self.did_config['backend_url']
         self.api = API(backend_url)
+        
+        # === Database setup ===
         db_path = self.cfg.get("db_path", "OPENAI_DB_PATH", "./src/data/app.db")
         self.db = WalletMeetingDB(db_path)
 
+        # === OpenAI settings from config ===
         self.model = self.cfg.get("model", "OPENAI_API_MODEL", OPENAI_API_MODEL)
         self.timezone = self.cfg.get("timezone", "OPENAI_TZ", "Asia/Tehran")
         self.url = self.cfg.get("url", "OPENAI_URL", OPENAI_URL_FORMAT.format(self.model))
         self.key = self.cfg.get(["key", "openai_key"], "OPENAI_API_KEY")
         self.voice = self.cfg.get(["voice", "openai_voice"], "OPENAI_VOICE", "alloy")
-        self.intro = self.cfg.get("welcome_message", "OPENAI_WELCOME_MESSAGE", ". سلام و درودبرشما،با رستوران بزرگمهر تماس گرفته اید . لطفا سفارشتون رو بفرمایید تا ثبت کنم. ")
+        
+        # === Welcome message from config ===
+        self.intro = self._get_welcome_message_from_config()
+        
+        # === Transfer settings ===
         self.transfer_to = self.cfg.get("transfer_to", "OPENAI_TRANSFER_TO", None)
         self.transfer_by = self.cfg.get("transfer_by", "OPENAI_TRANSFER_BY", self.call.to)
 
-        self.temp_order_data = {}
-        self.user_mentioned_items = []
+        # === State variables (service-agnostic) ===
+        self.temp_data = {}  # Generic temp storage for any service
         self.customer_name_from_history = None
         self.recent_order_ids = set()
         self.last_order_time = None
 
+        # === Codec mapping ===
         if self.codec.name == "mulaw":
             self.codec_name = "g711_ulaw"
         elif self.codec.name == "alaw":
@@ -145,10 +163,11 @@ class OpenAI(AIEngine):
         else:
             self.codec_name = "g711_ulaw"
 
+        # === Soniox config (merged with DID config) ===
         base_soniox_cfg = Config.get("soniox", cfg)
         soniox_overrides = {}
-        if did_config and 'soniox' in did_config:
-            soniox_overrides = did_config['soniox']
+        if self.did_config and 'soniox' in self.did_config:
+            soniox_overrides = self.did_config['soniox']
         
         class MergedSonioxConfig:
             def __init__(self, base, overrides):
@@ -185,18 +204,8 @@ class OpenAI(AIEngine):
         self.soniox_keepalive_sec = int(self.soniox_cfg.get("keepalive_sec", "SONIOX_KEEPALIVE_SEC", 15))
         self.soniox_upsample = bool(self.soniox_cfg.get("upsample_audio", "SONIOX_UPSAMPLE_AUDIO", True))
         
-        default_context_phrases = [
-            "کباب", "پرس کوبیده","کوبیده", "جوجه", "مرغ", "ته چین", "ته‌چین", "نوشابه", "کوکا", "فانتا", "خانواده",
-            "دوغ", "عالیس", "قوطی", "شیشه", "بطری", "قیمه", "خورش", "چلو", "برگ", "سلطانی",
-            "شیشلیک", "ششلیک", "چلو ششلیک", "چلو شیشلیک", "کباب شیشلیک", "کباب ششلیک", 
-            "پرس ششلیک", "پرس شیشلیک", "یه پرس ششلیک", "یک پرس ششلیک",
-            "ترش", "گیلانی", "تبریزی", "اردبیلی", "مصری", "بره", "میگو", "ماهی",
-            "پیتزا", "همبرگر", "چیزبرگر", "سیب زمینی", "پاستا", "سالاد", "سزار", "ماست",
-            "نیمرو", "املت", "تخم مرغ", "سوسیس", "هات داگ", "کره", "پنیر", "مربا",
-            "یک", "دو", "سه", "چهار", "پنج", "کوچک", "بزرگ", "خانواده", "مخصوص",
-            "بدون", "گوجه", "خیارشور", "پیاز", "برشته", "خوب", "پرس"
-        ]
-        
+        # === Soniox context phrases from config ===
+        default_context_phrases = []
         if self.did_config:
             custom_context = self.did_config.get('custom_context', {})
             menu_items = custom_context.get('menu_items', [])
@@ -207,6 +216,7 @@ class OpenAI(AIEngine):
         else:
             self.soniox_context_phrases = default_context_phrases
         
+        # === Soniox state ===
         self._soniox_audio_buffer = b''
         self.soniox_ws = None
         self.soniox_task = None
@@ -216,6 +226,23 @@ class OpenAI(AIEngine):
         self.soniox_silence_duration_ms = int(self.soniox_cfg.get("silence_duration_ms", "SONIOX_SILENCE_DURATION_MS", 500))
         self._order_confirmed = False
         self.forward_audio_to_openai = bool(self.soniox_cfg.get("forward_audio_to_openai", "FORWARD_AUDIO_TO_OPENAI", False))
+        self._fallback_whisper_enabled = False
+
+    # ---------------------- Config loading helpers ----------------------
+    def _get_welcome_message_from_config(self):
+        """Load welcome message from DID config."""
+        if self.did_config:
+            # Try multiple possible keys
+            welcome = (self.did_config.get('welcome_message') or 
+                      self.did_config.get('intro') or
+                      (self.did_config.get('openai', {}).get('welcome_message') if isinstance(self.did_config.get('openai'), dict) else None) or
+                      (self.did_config.get('openai', {}).get('intro') if isinstance(self.did_config.get('openai'), dict) else None))
+            if welcome:
+                return welcome
+        # Fallback to config file
+        return self.cfg.get("welcome_message", "OPENAI_WELCOME_MESSAGE", "")
+
+    # ---------------------- date/time helpers ----------------------
     def _to_ascii_digits(self, s: str) -> str:
         if not isinstance(s, str):
             return s
@@ -326,13 +353,11 @@ class OpenAI(AIEngine):
     def choose_codec(self, sdp):
         """Returns the preferred codec from a list - prefers Opus (48kHz) for better quality"""
         codecs = get_codecs(sdp)
-        # Prefer Opus first (48kHz high quality), then G.711
         priority = ["opus", "pcma", "pcmu"]
         cmap = {c.name.lower(): c for c in codecs}
         for codec_name in priority:
             if codec_name in cmap:
                 codec = CODECS[codec_name](cmap[codec_name])
-                # For Opus, prefer 48kHz sample rate
                 if codec_name == "opus" and codec.sample_rate == 48000:
                     logging.info("FLOW codec: Selected Opus at 48kHz (high quality)")
                     return codec
@@ -345,26 +370,17 @@ class OpenAI(AIEngine):
         raise UnsupportedCodec("No supported codec found")
 
     def get_audio_format(self):
-        """Returns the corresponding audio format string for OpenAI Realtime API.
-        OpenAI only supports G.711, so we always return G.711 format even if we use Opus for Soniox."""
-        # OpenAI Realtime API only supports G.711 (g711_ulaw or g711_alaw)
-        # Even if we use Opus for better Soniox quality, OpenAI needs G.711
+        """Returns the corresponding audio format string for OpenAI Realtime API."""
         if self.codec_name == "opus":
-            # If Opus is selected, we'll need to convert to G.711 for OpenAI
-            # Default to ulaw for compatibility
             return "g711_ulaw"
         return self.codec_name
 
     def _soniox_audio_format(self):
-        """Map RTP codec to Soniox raw input config. Prefers PCM at 16kHz for better quality."""
-        # If we have Opus at 48kHz, use it directly
+        """Map RTP codec to Soniox raw input config."""
         if self.codec.name == "opus" and self.codec.sample_rate == 48000:
             return ("pcm_s16le", 48000, 1)
-        # For G.711, we'll convert to PCM and upsample to 16kHz
-        # Soniox will receive PCM at 16kHz instead of G.711 at 8kHz
         if self.soniox_upsample:
             return ("pcm_s16le", 16000, 1)
-        # Fallback: use original format
         if self.codec_name == "g711_ulaw":
             return ("mulaw", 8000, 1)
         if self.codec_name == "g711_alaw":
@@ -375,36 +391,30 @@ class OpenAI(AIEngine):
         """Convert G.711 (μ-law or A-law) to 16-bit PCM."""
         try:
             if is_ulaw:
-                # Convert μ-law to linear PCM
-                pcm = audioop.ulaw2lin(audio_data, 2)  # 2 bytes per sample (16-bit)
+                pcm = audioop.ulaw2lin(audio_data, 2)
             else:
-                # Convert A-law to linear PCM
-                pcm = audioop.alaw2lin(audio_data, 2)  # 2 bytes per sample (16-bit)
+                pcm = audioop.alaw2lin(audio_data, 2)
             return pcm
         except Exception as e:
             logging.error("FLOW audio: G.711 conversion error: %s", e)
             return audio_data
     
     def _upsample_audio(self, pcm_data, from_rate=8000, to_rate=16000):
-        """Upsample PCM audio from one sample rate to another using linear interpolation."""
+        """Upsample PCM audio from one sample rate to another."""
         if from_rate == to_rate:
             return pcm_data
         
         if not HAS_NUMPY:
-            # Simple linear interpolation without numpy
-            # Convert bytes to samples (16-bit = 2 bytes per sample)
             num_samples = len(pcm_data) // 2
             ratio = to_rate / from_rate
             new_num_samples = int(num_samples * ratio)
             
-            # Convert to list of samples
             samples = []
             for i in range(num_samples):
                 idx = i * 2
                 sample = int.from_bytes(pcm_data[idx:idx+2], byteorder='little', signed=True)
                 samples.append(sample)
             
-            # Linear interpolation
             new_samples = []
             for i in range(new_num_samples):
                 pos = i / ratio
@@ -414,27 +424,19 @@ class OpenAI(AIEngine):
                 if idx >= num_samples - 1:
                     new_samples.append(samples[-1])
                 else:
-                    # Linear interpolation
                     sample = int(samples[idx] * (1 - frac) + samples[idx + 1] * frac)
                     new_samples.append(sample)
             
-            # Convert back to bytes
             result = b''.join(s.to_bytes(2, byteorder='little', signed=True) for s in new_samples)
             return result
         else:
-            # Use numpy for better quality resampling
-            # Convert bytes to numpy array
             samples = np.frombuffer(pcm_data, dtype=np.int16)
-            # Linear interpolation
             num_samples = len(samples)
             ratio = to_rate / from_rate
             new_num_samples = int(num_samples * ratio)
             
-            # Create indices for interpolation
             indices = np.linspace(0, num_samples - 1, new_num_samples)
-            # Linear interpolation
             new_samples = np.interp(indices, np.arange(num_samples), samples)
-            # Convert back to int16 and then to bytes
             new_samples = new_samples.astype(np.int16)
             return new_samples.tobytes()
     
@@ -443,23 +445,196 @@ class OpenAI(AIEngine):
         if not self.soniox_upsample:
             return audio_data
         
-        # If we're using Opus, audio is already high quality
         if self.codec.name == "opus":
-            # Opus audio might need conversion depending on format
-            # For now, assume it's already in good format
             return audio_data
         
-        # Convert G.711 to PCM
         is_ulaw = (self.codec_name == "g711_ulaw")
         pcm_8k = self._convert_g711_to_pcm16(audio_data, is_ulaw)
-        
-        # Upsample from 8kHz to 16kHz
         pcm_16k = self._upsample_audio(pcm_8k, from_rate=8000, to_rate=16000)
-        
         return pcm_16k
 
-    # ---------------------- order checking helpers ----------------------
+    # ---------------------- Function definitions from config ----------------------
+    def _get_function_definitions(self):
+        """Load function definitions from DID config, with fallback to defaults."""
+        # Default functions (always available)
+        default_functions = [
+            {"type": "function", "name": "terminate_call",
+             "description": "ONLY call this function when the USER explicitly says they want to end the call. "
+                            "Examples: 'خداحافظ', 'بای', 'تماس رو قطع کن', 'تماس رو پایان بده'. "
+                            "DO NOT call this if: user is silent, user says '.', user pauses, or you just finished talking. "
+                            "ONLY call when user EXPLICITLY requests to end the call. "
+                            "Always say a friendly goodbye first, then call this function.",
+             "parameters": {"type": "object", "properties": {}, "required": []}},
+            {"type": "function", "name": "transfer_call",
+             "description": "call the function if a request was received to transfer a call with an operator, a person",
+             "parameters": {"type": "object", "properties": {}, "required": []}},
+        ]
+        
+        # Load custom functions from DID config
+        if self.did_config and 'functions' in self.did_config:
+            custom_functions = self.did_config['functions']
+            if isinstance(custom_functions, list):
+                # If it's a list, replace all defaults
+                return custom_functions
+            elif isinstance(custom_functions, dict):
+                # If it's a dict, merge with defaults (custom overrides defaults)
+                function_map = {f['name']: f for f in default_functions}
+                for func in custom_functions.values():
+                    if isinstance(func, dict) and 'name' in func:
+                        function_map[func['name']] = func
+                return list(function_map.values())
+        
+        # Return defaults if no custom functions in config
+        return default_functions
+
+    # ---------------------- Instructions and welcome message builders ----------------------
+    def _get_scenario_config(self, scenario_type):
+        """Get scenario configuration from DID config."""
+        if not self.did_config:
+            return {}
+        scenarios = self.did_config.get('scenarios', {})
+        return scenarios.get(scenario_type, {})
+
+    def _build_instructions_from_config(self, has_undelivered_order=False, orders=None):
+        """Build instructions from DID config, with scenario support."""
+        # Get base instructions from config
+        base_instructions_template = ""
+        if self.did_config and 'instructions_base' in self.did_config:
+            base_instructions_template = self.did_config['instructions_base']
+        else:
+            # Minimal fallback
+            base_instructions_template = "شما یک دستیار هوشمند هستید. فقط فارسی صحبت کنید. لحن: گرم، پرانرژی، مودب، حرفه‌ای."
+        
+        # Add customer name instruction if available
+        name_instruction = ""
+        if self.customer_name_from_history:
+            name_instruction = f"مهم: نام مشتری ({self.customer_name_from_history}) از تاریخچه در دسترس است. نیازی به پرسیدن نام نیست. "
+        else:
+            name_instruction = "اگر نام مشتری موجود نیست، نام را بپرسید. "
+        
+        # Format base instructions
+        base_instructions = base_instructions_template.replace("{name_instruction}", name_instruction)
+        
+        # Get scenario-specific instructions
+        scenario_type = 'has_orders' if has_undelivered_order else 'new_customer'
+        scenario_config = self._get_scenario_config(scenario_type)
+        
+        scenario_instructions = ""
+        if scenario_config:
+            if has_undelivered_order and orders:
+                # Has orders scenario
+                if len(orders) == 1:
+                    template = scenario_config.get('single_order_template', "")
+                    if template:
+                        order = orders[0]
+                        scenario_instructions = template.replace("{status_display}", str(order.get('status_display', '')))
+                else:
+                    template = scenario_config.get('multiple_orders_template', "")
+                    if template:
+                        scenario_instructions = template.replace("{orders_count}", str(len(orders)))
+            else:
+                # New customer scenario
+                template = scenario_config.get('new_order_template', "")
+                if template:
+                    scenario_instructions = template.replace("{name_instruction}", name_instruction)
+        
+        # Combine base and scenario instructions
+        if scenario_instructions:
+            return base_instructions + " " + scenario_instructions
+        return base_instructions
+
+    def _build_welcome_message_from_config(self, has_undelivered_order=False, orders=None):
+        """Build welcome message from DID config."""
+        # Get service name from config
+        service_name = (self.did_config.get('restaurant_name') if self.did_config else None) or \
+                      (self.did_config.get('service_name') if self.did_config else None) or \
+                      'خدمات ما'
+        
+        # Try to get scenario config
+        scenario_type = 'has_orders' if has_undelivered_order else 'new_customer'
+        scenario_config = self._get_scenario_config(scenario_type)
+        welcome_templates = scenario_config.get('welcome_templates', {}) if scenario_config else {}
+        
+        # Build base greeting with fallbacks
+        if self.customer_name_from_history:
+            base_greeting_template = welcome_templates.get('with_customer_name', 
+                "سلام و درودبرشما {customer_name} عزیز، با {service_name} تماس گرفته‌اید")
+            try:
+                base_greeting = base_greeting_template.format(
+                    customer_name=self.customer_name_from_history,
+                    service_name=service_name
+                )
+            except Exception:
+                base_greeting = f"سلام و درودبرشما {self.customer_name_from_history} عزیز، با {service_name} تماس گرفته‌اید"
+        else:
+            base_greeting_template = welcome_templates.get('without_customer_name',
+                "سلام و درودبرشما، با {service_name} تماس گرفته‌اید")
+            try:
+                base_greeting = base_greeting_template.format(service_name=service_name)
+            except Exception:
+                base_greeting = f"سلام و درودبرشما، با {service_name} تماس گرفته‌اید"
+        
+        # Add scenario-specific content (only for restaurant with orders)
+        if has_undelivered_order and orders:
+            # Format order details (for restaurant)
+            order_details = []
+            for order in orders:
+                status_display = order.get('status_display', '')
+                items_text = self._format_items_list_persian(order.get('items', []))
+                if items_text:
+                    order_details.append(f"سفارش شما {items_text} {status_display} است")
+                else:
+                    order_details.append(f"سفارش شما {status_display} است")
+            
+            orders_text = "، ".join(order_details)
+            closing = welcome_templates.get('closing_with_orders', " از صبر شما متشکریم.")
+            return f"{base_greeting}، {orders_text}.{closing}"
+        else:
+            # New customer or no orders
+            new_customer_msg = welcome_templates.get('new_customer_question', 
+                " لطفا درخواست خود را بفرمایید.")
+            return f"{base_greeting}.{new_customer_msg}"
+
+    def _format_items_list_persian(self, items):
+        """Format items list in Persian (for restaurant orders)."""
+        if not items:
+            return ""
+        
+        persian_numbers = {
+            1: "یک", 2: "دو", 3: "سه", 4: "چهار", 5: "پنج",
+            6: "شش", 7: "هفت", 8: "هشت", 9: "نه", 10: "ده"
+        }
+        
+        formatted_items = []
+        for item in items:
+            quantity = item.get('quantity', 1)
+            item_name = (item.get('menu_item_name') or 
+                        (item.get('menu_item', {}).get('name') if isinstance(item.get('menu_item'), dict) else None) or
+                        item.get('name', ''))
+            
+            if not item_name:
+                continue
+            
+            if quantity == 1:
+                formatted_items.append(f"یک {item_name}")
+            elif quantity <= 10:
+                formatted_items.append(f"{persian_numbers.get(quantity, str(quantity))} {item_name}")
+            else:
+                formatted_items.append(f"{quantity} {item_name}")
+        
+        if not formatted_items:
+            return ""
+        elif len(formatted_items) == 1:
+            return formatted_items[0]
+        elif len(formatted_items) == 2:
+            return f"{formatted_items[0]} و {formatted_items[1]}"
+        else:
+            all_except_last = "، ".join(formatted_items[:-1])
+            return f"{all_except_last} و {formatted_items[-1]}"
+
+    # ---------------------- Order checking helpers (for restaurant) ----------------------
     async def _check_undelivered_order(self, phone_number):
+        """Check if caller has undelivered orders (restaurant service)."""
         if not phone_number:
             return False, []
         
@@ -497,394 +672,47 @@ class OpenAI(AIEngine):
             logging.error("Exception checking orders: %s", e, exc_info=True)
             return False, []
 
-    def _format_items_list_persian(self, items):
-        if not items:
-            return ""
-        
-        persian_numbers = {
-            1: "یک", 2: "دو", 3: "سه", 4: "چهار", 5: "پنج",
-            6: "شش", 7: "هفت", 8: "هشت", 9: "نه", 10: "ده"
-        }
-        
-        formatted_items = []
-        for item in items:
-            quantity = item.get('quantity', 1)
-            item_name = (item.get('menu_item_name') or 
-                        (item.get('menu_item', {}).get('name') if isinstance(item.get('menu_item'), dict) else None) or
-                        item.get('name', ''))
-            
-            if not item_name:
-                continue
-            
-            if quantity == 1:
-                formatted_items.append(f"یک {item_name}")
-            elif quantity <= 10:
-                formatted_items.append(f"{persian_numbers.get(quantity, str(quantity))} {item_name}")
-            else:
-                formatted_items.append(f"{quantity} {item_name}")
-        
-        if not formatted_items:
-            return ""
-        elif len(formatted_items) == 1:
-            return formatted_items[0]
-        elif len(formatted_items) == 2:
-            return f"{formatted_items[0]} و {formatted_items[1]}"
-        else:
-            all_except_last = "، ".join(formatted_items[:-1])
-            return f"{all_except_last} و {formatted_items[-1]}"
-
-    def _get_scenario_config(self, scenario_type):
-        if not self.did_config:
-            return {}
-        scenarios = self.did_config.get('scenarios', {})
-        return scenarios.get(scenario_type, {})
-    
-    def _get_function_definitions(self):
-        default_functions = [
-            {"type": "function", "name": "terminate_call",
-             "description": "ONLY call this function when the USER explicitly says they want to end the call. "
-                            "Examples: 'خداحافظ', 'بای', 'تماس رو قطع کن', 'تماس رو پایان بده', 'خداحافظی', 'خداحافظی می‌کنم'. "
-                            "DO NOT call this if: user is silent, user says '.', user pauses, or you just finished talking. "
-                            "ONLY call when user EXPLICITLY requests to end the call. "
-                            "Always say a friendly goodbye first, then call this function.",
-             "parameters": {"type": "object", "properties": {}, "required": []}},
-            {"type": "function", "name": "transfer_call",
-             "description": "call the function if a request was received to transfer a call with an operator, a person",
-             "parameters": {"type": "object", "properties": {}, "required": []}},
-            {
-                "type": "function",
-                "name": "track_order",
-                "description": "پیگیری سفارش بر اساس شماره تلفن. شماره تلفن خودکار است.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "phone_number": {"type": "string", "description": "شماره تلفن مشتری برای پیگیری سفارش (اختیاری - اگر ارائه نشود از شماره تماس‌گیرنده استفاده می‌شود)"},
-                    },
-                    "required": [],
-                    "additionalProperties": False
-                }
-            },
-            {
-                "type": "function",
-                "name": "get_menu_specials",
-                "description": "دریافت پیشنهادات ویژه رستوران.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": False
-                }
-            },
-            {
-                "type": "function",
-                "name": "search_menu_item",
-                "description": "جستجوی غذا در منو. اگر نام دقیق موجود نبود، نزدیک‌ترین را پیدا می‌کند. خیلی مهم: اگر چند نتیجه پیدا شد، همیشه اولین نتیجه (بهترین match) را استفاده کن و از کاربر نپرس که کدام نوع را می‌خواهد. به صورت خودکار بهترین گزینه را انتخاب کن.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "item_name": {"type": "string", "description": "نام غذا یا کلمه کلیدی برای جستجو"},
-                        "category": {"type": "string", "description": "دسته‌بندی غذا (اختیاری): غذای ایرانی، نوشیدنی، فست فود، سینی ها، صبحانه، پیش غذا", "nullable": True},
-                    },
-                    "required": ["item_name"],
-                    "additionalProperties": False
-                }
-            },
-            {
-                "type": "function",
-                "name": "create_order",
-                "description": "ثبت سفارش نهایی. فقط یکبار در آخر تماس و بعد از مرور و تایید کاربر. قبل از صدا زدن: customer_name و address موجود، items خالی نیست، همه غذاها و تعدادها درست، notes ثبت شده. شماره تلفن خودکار است.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "customer_name": {"type": "string", "description": "نام مشتری (الزامی - نباید خالی باشد)"},
-                        "phone_number": {"type": "string", "description": "شماره تلفن مشتری (اختیاری - به صورت خودکار از تماس گرفته می‌شود)"},
-                        "address": {"type": "string", "description": "آدرس تحویل سفارش (الزامی - نباید خالی باشد)"},
-                        "items": {
-                            "type": "array",
-                            "description": "لیست آیتم‌های سفارش شامل نام غذا و تعداد (الزامی - نباید خالی باشد، باید حداقل یک غذا داشته باشد). خیلی مهم: 1) همه غذاهایی که کاربر گفت باید در این لیست باشند، 2) تعداد (quantity) هر غذا باید دقیقا همان باشد که کاربر گفت (اگر گفت 'دو' یا 'دو تا' باید 2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد). 3) برای کباب کوبیده: اگر کاربر گفت 'یک کوبیده' یا 'یک کباب کوبیده' یا 'یک پرس کوبیده'، quantity=1 ثبت کن. اگر گفت 'دو کوبیده' یا 'دو کباب کوبیده' یا 'دو پرس کوبیده'، quantity=2 ثبت کن. هیچ وقت از کاربر نپرس چند سیخ می‌خواهد.",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "item_name": {"type": "string", "description": "نام دقیق غذا از منو"},
-                                    "quantity": {"type": "integer", "description": "تعداد دقیق غذا - باید دقیقا همان باشد که کاربر گفت (اگر گفت 'یک ته‌چین مرغ' باید quantity=1 باشد، اگر گفت 'دو کباب' باید quantity=2 باشد، اگر گفت 'سه' یا 'سه تا' باید 3 باشد). خیلی مهم: اگر کاربر تعداد را در همان جمله اول گفت (مثلا 'یک ته‌چین مرغ میخام' یا 'یک کوبیده' یا 'یک کباب کوبیده')، از همان عدد استفاده کن و دیگر از او تعداد نپرس. برای کباب کوبیده: اگر گفت 'یک کوبیده' = quantity=1، 'دو کوبیده' = quantity=2. هیچ وقت درباره سیخ نپرس. اگر کاربر تعداد نگفت، مقدار پیش‌فرض 1 است.", "minimum": 1, "default": 1}
-                                },
-                                "required": ["item_name", "quantity"],
-                            }
-                        },
-                        "notes": {"type": "string", "description": "اگر کاربر درخواست خاصی درباره سفارش داد، حتما در این فیلد ثبت کن.", "nullable": True},
-                    },
-                    "required": ["customer_name", "address", "items"],
-                    "additionalProperties": False
-                }
-            },
-        ]
-        
-        if self.did_config and 'functions' in self.did_config:
-            custom_functions = self.did_config['functions']
-            if isinstance(custom_functions, list):
-                return custom_functions
-            elif isinstance(custom_functions, dict):
-                function_map = {f['name']: f for f in default_functions}
-                for func in custom_functions.values():
-                    if isinstance(func, dict) and 'name' in func:
-                        function_map[func['name']] = func
-                return list(function_map.values())
-        
-        return default_functions
-    
-    def _build_welcome_message(self, has_undelivered_order, orders=None):
-        restaurant_name = self.did_config.get('restaurant_name', 'رستوران بزرگمهر') if self.did_config else 'رستوران بزرگمهر'
-        welcome_config = self._get_scenario_config('has_orders' if has_undelivered_order else 'new_customer')
-        welcome_templates = welcome_config.get('welcome_templates', {})
-        
-        if self.customer_name_from_history:
-            base_greeting_template = welcome_templates.get('with_customer_name', 
-                "سلام و درودبرشما {customer_name} عزیز، با {restaurant_name} تماس گرفته‌اید")
-            base_greeting = base_greeting_template.format(
-                customer_name=self.customer_name_from_history,
-                restaurant_name=restaurant_name
-            )
-        else:
-            base_greeting_template = welcome_templates.get('without_customer_name',
-                "سلام و درودبرشما، با {restaurant_name} تماس گرفته‌اید")
-            base_greeting = base_greeting_template.format(restaurant_name=restaurant_name)
-        
-        if has_undelivered_order and orders:
-            order_details_list = []
-            for order in orders:
-                status_display = order.get('status_display', '')
-                address = order.get('address', '')
-                items = order.get('items', [])
-                order_status = order.get('status', '')
-                items_text = self._format_items_list_persian(items)
-                
-                if order_status == 'preparing':
-                    status_text = f"{status_display} توسط رستوران است"
-                else:
-                    status_text = f"{status_display} است"
-                
-                if items_text:
-                    if address:
-                        order_detail = f"سفارش شما {items_text}، به مقصد {address} ثبت شده بود {status_text}"
-                    else:
-                        order_detail = f"سفارش شما {items_text} ثبت شده بود {status_text}"
-                else:
-                    if address:
-                        order_detail = f"سفارش شما به مقصد {address} ثبت شده بود {status_text}"
-                    else:
-                        order_detail = f"سفارش شما ثبت شده بود {status_text}"
-                
-                order_details_list.append(order_detail)
-            
-            if len(order_details_list) == 1:
-                orders_text = order_details_list[0]
-            else:
-                orders_text = "، ".join(order_details_list[:-1]) + f" و همچنین {order_details_list[-1]}"
-            
-            closing_message = welcome_templates.get('closing_with_orders',
-                " از صبر و شکیبایی شما متشکریم. اگر امر دیگری هست در خدمت شما هستم.")
-            return f"{base_greeting}، {orders_text}.{closing_message}"
-        else:
-            new_customer_message = welcome_templates.get('new_customer_question', " لطفا سفارشتون رو بفرمایید تا ثبت کنم.")
-            return f"{base_greeting}.{new_customer_message}"
-
-    def _build_customized_instructions(self, has_undelivered_order, orders=None):
-        if self.did_config:
-            base_instructions_template = self.did_config.get('instructions_base',
-                "شما دستیار هوشمند رستوران هستید. "
-                "فقط فارسی صحبت کنید. لحن: گرم، پرانرژی، مودب، حرفه‌ای. "
-                "از 'شما' استفاده کنید، نه 'تو'. به جنسیت اشاره نکنید (آقا/خانم). "
-                "{name_instruction}"
-                "شماره تلفن خودکار است، نپرسید. "
-                "اگر کلمه‌ای شبیه نام غذا بود، آن را پیشنهاد دهید (مثلا: 'کووید' → 'کوبیده فرمودید؟'). "
-                "مهم: 'ششلیک' یا 'شیشلیک' یک نوع غذا است (کباب ششلیک)، نه عدد 61 (شصت و یک). "
-                "همچنین 'چلو ششلیک' یا 'چلو شیشلیک' یک غذا است، نه عدد 461. "
-                "اگر کاربر گفت 'ششلیک' یا 'شیشلیک'، منظورشان غذا است نه عدد. "
-                "اگر کاربر گفت '۴۶ گیگ'، 'چهل و شش گیگ'، 'شصت و یک'، یا '۶۱' در متن سفارش غذا، "
-                "احتمالا منظورشان 'ششلیک' یا 'چلو ششلیک' است. همیشه 'ششلیک' را به عنوان غذا در نظر بگیرید نه عدد. "
-                "خیلی مهم - استخراج تعداد: وقتی کاربر می‌گوید 'یک ته‌چین مرغ میخام' یا 'دو کباب میخوام'، تعداد را از همان جمله استخراج کن. "
-                "اگر کاربر تعداد را در همان جمله گفت، دیگر از او تعداد نپرس. "
-                "خیلی مهم - ممنوعیت تکرار: به هیچ عنوان و در هیچ مرحله‌ای چیزی که کاربر گفت را تکرار نکن. "
-                "هیچ وقت نگو 'پس شما یک کباب کوبیده می‌خوای' یا 'پس سفارش شما اینه' یا 'پس شما گفتید' یا هر جمله مشابهی که چیزی که کاربر گفت را دوباره می‌گوید. "
-                "بعد از هر پاسخ کاربر (غذا، آدرس، نام، و غیره)، فقط به مرحله بعدی برو و سوال بعدی را بپرس. هیچ تکرار، تاکید، یا تاییدی نکن. "
-                "فقط در آخر (قبل از ثبت) یکبار کل سفارش را مرور کن و بعد از تایید کاربر فقط ثبت را انجام بده. "
-                "خیلی مهم - کباب کوبیده: وقتی کاربر کباب کوبیده سفارش داد (مثلا 'یک کباب کوبیده'، 'دو کباب کوبیده'، 'یک کوبیده'، 'دو کوبیده'، 'یک پرس کوبیده'، 'دو پرس کوبیده')، "
-                "هیچ وقت از او نپرس 'چند تا کباب کوبیده می‌خوای' یا 'چند سیخ کباب کوبیده می‌خوای'. "
-                "فقط همان تعداد کباب کوبیده‌ای که گفته را مستقیماً ثبت کن (اگر گفت 'یک کوبیده' = یک کباب کوبیده، اگر گفت 'دو کوبیده' = دو کباب کوبیده). "
-                "مطلقاً از پرسیدن درباره تعداد یا سیخ خودداری کن و بلافاصله به مرحله بعدی (آدرس) برو. "
-                "خیلی مهم - انتخاب خودکار: وقتی کاربر یک نام کلی گفت (مثلا 'زیتون'، 'نوشابه'، 'سالاد') و چند نوع در منو وجود دارد، "
-                "به هیچ عنوان از کاربر نپرس که کدام نوع را می‌خواهد (مثلا 'چه زیتونی؟' یا 'ما چند نوع داریم'). "
-                "همیشه از search_menu_item استفاده کن و اولین نتیجه (بهترین match) را به صورت خودکار انتخاب کن و ثبت کن. "
-                "مثلا اگر کاربر گفت 'یک زیتون'، search_menu_item را صدا بزن و اولین نتیجه را مستقیماً به سفارش اضافه کن. "
-                "فقط اگر هیچ نتیجه‌ای پیدا نشد، از کاربر بپرس یا پیشنهاد بده. "
-                "مهم: هیچ وقت شماره سفارش (order ID) را به کاربر نگو. فقط وضعیت و جزئیات سفارش را بگو. "
-                "تماس را فقط با صراحت کاربر قطع کنید (خداحافظ، بای، قطع کن). سکوت به معنای پایان نیست.")
-        else:
-            base_instructions_template = (
-                "شما دستیار هوشمند رستوران بزرگمهر هستید. "
-                "فقط فارسی صحبت کنید. لحن: گرم، پرانرژی، مودب، حرفه‌ای. "
-                "از 'شما' استفاده کنید، نه 'تو'. به جنسیت اشاره نکنید (آقا/خانم). "
-                "{name_instruction}"
-                "شماره تلفن خودکار است، نپرسید. "
-                "اگر کلمه‌ای شبیه نام غذا بود، آن را پیشنهاد دهید (مثلا: 'کووید' → 'کوبیده فرمودید؟'). "
-                "خیلی مهم - استخراج تعداد: وقتی کاربر می‌گوید 'یک ته‌چین مرغ میخام' یا 'دو کباب میخوام'، تعداد را از همان جمله استخراج کن. "
-                "اگر کاربر تعداد را در همان جمله گفت، دیگر از او تعداد نپرس. "
-                "خیلی مهم - ممنوعیت تکرار: به هیچ عنوان و در هیچ مرحله‌ای چیزی که کاربر گفت را تکرار نکن. "
-                "هیچ وقت نگو 'پس شما یک کباب کوبیده می‌خوای' یا 'پس سفارش شما اینه' یا 'پس شما گفتید' یا هر جمله مشابهی که چیزی که کاربر گفت را دوباره می‌گوید. "
-                "بعد از هر پاسخ کاربر (غذا، آدرس، نام، و غیره)، فقط به مرحله بعدی برو و سوال بعدی را بپرس. هیچ تکرار، تاکید، یا تاییدی نکن. "
-                "فقط در آخر (قبل از ثبت) یکبار کل سفارش را مرور کن و بعد از تایید کاربر فقط ثبت را انجام بده. "
-                "خیلی مهم - کباب کوبیده: وقتی کاربر کباب کوبیده سفارش داد (مثلا 'یک کباب کوبیده'، 'دو کباب کوبیده'، 'یک کوبیده'، 'دو کوبیده'، 'یک پرس کوبیده'، 'دو پرس کوبیده')، "
-                "هیچ وقت از او نپرس 'چند تا کباب کوبیده می‌خوای' یا 'چند سیخ کباب کوبیده می‌خوای'. "
-                "فقط همان تعداد کباب کوبیده‌ای که گفته را مستقیماً ثبت کن (اگر گفت 'یک کوبیده' = یک کباب کوبیده، اگر گفت 'دو کوبیده' = دو کباب کوبیده). "
-                "مطلقاً از پرسیدن درباره تعداد کوبیده یا کباب کوبیده اگر خودش اعلام کرده بود خودداری کن و بلافاصله به مرحله بعدی (آدرس) برو. "
-                "خیلی مهم - انتخاب خودکار: وقتی کاربر یک نام کلی گفت (مثلا 'زیتون'، 'نوشابه'، 'سالاد') و چند نوع در منو وجود دارد، "
-                "به هیچ عنوان از کاربر نپرس که کدام نوع را می‌خواهد (مثلا 'چه زیتونی؟' یا 'ما چند نوع داریم'). "
-                "همیشه از search_menu_item استفاده کن و اولین نتیجه (بهترین match) را به صورت خودکار انتخاب کن و ثبت کن. "
-                "مثلا اگر کاربر گفت 'یک زیتون'، search_menu_item را صدا بزن و اولین نتیجه را مستقیماً به سفارش اضافه کن. "
-                "فقط اگر هیچ نتیجه‌ای پیدا نشد، از کاربر بپرس یا پیشنهاد بده. "
-                "مهم: هیچ وقت شماره سفارش (order ID) را به کاربر نگو. فقط وضعیت و جزئیات سفارش را بگو. "
-                "تماس را فقط با صراحت کاربر قطع کنید (خداحافظ، بای، قطع کن). سکوت به معنای پایان نیست."
-            )
-        
-        # Add customer name instruction if available
-        name_instruction = ""
-        if self.customer_name_from_history:
-            name_instruction = f"مهم: نام مشتری ({self.customer_name_from_history}) از سفارشات قبلی در دسترس است. نیازی به پرسیدن نام نیست و از نام موجود استفاده کن. "
-        else:
-            name_instruction = "اگر مشتری قبلا سفارش نداده، نام مشتری را بپرس. "
-        
-        # Format base instructions with name instruction
-        base_instructions = base_instructions_template.format(name_instruction=name_instruction)
-        
-        # Get scenario configuration
-        scenario_config = self._get_scenario_config('has_orders' if has_undelivered_order else 'new_customer')
-        
-        if has_undelivered_order and orders and len(orders) > 0:
-            # Scenario 1: Caller has undelivered order(s)
-            orders_count = len(orders)
-            
-            # Get scenario instructions template from config
-            if orders_count == 1:
-                order = orders[0]
-                order_status = order.get('status', '')
-                order_id = order.get('id', '')
-                status_display = order.get('status_display', '')
-                
-                # Try to get template from config
-                template = scenario_config.get('single_order_template',
-                    "مشتری سفارش ({status_display}) دارد. "
-                    "1) وضعیت را تایید کنید و بپرسید سوالی دارند. "
-                    "2) برای سفارش جدید به سناریوی ثبت بروید. "
-                    "3) برای بررسی مجدد از track_order استفاده کنید. "
-                    "4) درباره زمان/جزئیات پاسخ دهید. "
-                    "مهم: هیچ وقت شماره سفارش را به کاربر نگو.")
-                
-                # Use safe replacement to avoid KeyError with other curly braces
-                scenario_instructions = template.replace("{status_display}", str(status_display))
-            else:
-                # Multiple orders
-                order_ids = [str(o.get('id', '')) for o in orders]
-                
-                # Try to get template from config
-                template = scenario_config.get('multiple_orders_template',
-                    "مشتری {orders_count} سفارش تحویل نشده دارد. "
-                    "1) وضعیت را تایید کنید و بپرسید سوالی دارند. "
-                    "2) برای سفارش جدید به سناریوی ثبت بروید. "
-                    "3) برای بررسی مجدد از track_order استفاده کنید. "
-                    "4) درباره زمان/جزئیات پاسخ دهید. "
-                    "مهم: هیچ وقت شماره سفارش را به کاربر نگو.")
-                
-                # Use safe replacement to avoid KeyError with other curly braces
-                scenario_instructions = template.replace("{orders_count}", str(orders_count))
-            
-            # Add status-specific guidance for latest order
-            latest_order = orders[0]
-            order_status = latest_order.get('status', '')
-            
-            # Get status-specific messages from config
-            status_messages = scenario_config.get('status_messages', {})
-            
-            if order_status in ['pending', 'confirmed']:
-                status_msg = status_messages.get('pending',
-                    "نکته: سفارش در حال تایید یا تایید شده است. به مشتری اطمینان بده که سفارش در حال آماده شدن است. ")
-                scenario_instructions += status_msg
-            elif order_status == 'preparing':
-                status_msg = status_messages.get('preparing',
-                    "نکته: سفارش در حال آماده سازی است. به مشتری بگو که به زودی آماده می‌شود. ")
-                scenario_instructions += status_msg
-            elif order_status == 'on_delivery':
-                status_msg = status_messages.get('on_delivery',
-                    "نکته: سفارش به پیک تحویل داده شده و در راه است. به مشتری بگو که به زودی به دستش می‌رسد. ")
-                scenario_instructions += status_msg
-            
-        else:
-            # Scenario 2: Caller has no undelivered orders (new customer or all orders delivered)
-            # Get new customer scenario template from config
-            template = scenario_config.get('new_order_template',
-                "وظیفه: دریافت سفارش جدید. "
-                "{name_instruction}"
-                "مراحل: 1) پیشنهادات ویژه (get_menu_specials) اگر درخواست شد. "
-                "2) غذاها را بگیرید؛ اگر موجود نبود با search_menu_item شبیه‌ترین را بیابید. "
-                "خیلی مهم: اگر search_menu_item چند نتیجه برگرداند، همیشه اولین نتیجه (بهترین match) را استفاده کن. "
-                "به هیچ عنوان از کاربر نپرس که کدام نوع را می‌خواهد. به صورت خودکار بهترین گزینه را انتخاب و ثبت کن. "
-                "3) آدرس را بگیرید. "
-                "4) همه غذاها و تعدادها را ثبت کنید: 'یک کباب و دو دوغ' → [{item_name: 'کباب', quantity: 1}, {item_name: 'دوغ', quantity: 2}]. "
-                "5) فقط یکبار در آخر تماس (قبل از ثبت) مرور و تایید بگیرید. "
-                "6) وقتی همه اطلاعات کامل است و کاربر آماده ثبت است، فقط یکبار کل سفارش را مرور کنید: 'پس سفارش شما: دو کباب، سه دوغ - درست است؟' "
-                "7) بعد از تایید کاربر ('بله'/'درسته'/'باشه'/'ثبت کن')، فقط create_order را صدا بزنید و هیچ چیز دیگری نگو. "
-                "8) قبل از create_order: items خالی نیست، customer_name و address موجود، همه غذاها و تعدادها درست، notes ثبت شده. "
-                "9) فقط یکبار create_order را صدا بزنید. "
-                "خیلی مهم - ممنوعیت تکرار: به هیچ عنوان و در هیچ مرحله‌ای چیزی که کاربر گفت را تکرار نکن. "
-                "هیچ وقت نگو 'پس شما یک کباب کوبیده می‌خوای' یا 'پس سفارش شما اینه' یا 'پس شما گفتید' یا هر جمله مشابهی که چیزی که کاربر گفت را دوباره می‌گوید. "
-                "بعد از هر پاسخ کاربر (غذا، آدرس، نام، و غیره)، فقط به مرحله بعدی برو و سوال بعدی را بپرس. هیچ تکرار، تاکید، یا تاییدی نکن. "
-                "فقط در آخر (قبل از ثبت) یکبار کل سفارش را مرور کن و بعد از تایید کاربر فقط ثبت را انجام بده. "
-                "خیلی مهم - استخراج تعداد: وقتی کاربر می‌گوید 'یک ته‌چین مرغ میخام' یا 'دو کباب میخوام'، تعداد را از همان جمله استخراج کن (یک=1، دو=2، سه=3 و غیره). "
-                "اگر کاربر تعداد را در همان جمله گفت، دیگر از او تعداد نپرس و همان عدد را استفاده کن. "
-                "خیلی مهم - کباب کوبیده: وقتی کاربر کباب کوبیده سفارش داد (مثلا 'یک کباب کوبیده'، 'دو کباب کوبیده'، 'یک کوبیده'، 'دو کوبیده'، 'یک پرس کوبیده'، 'دو پرس کوبیده')، "
-                "هیچ وقت از او نپرس 'چند تا کباب کوبیده می‌خوای' یا 'چند سیخ کباب کوبیده می‌خوای'. "
-                "فقط همان تعداد کباب کوبیده‌ای که گفته را مستقیماً ثبت کن (اگر گفت 'یک کوبیده' = یک کباب کوبیده quantity=1، اگر گفت 'دو کوبیده' = دو کباب کوبیده quantity=2). "
-                "مطلقاً از پرسیدن درباره تعداد یا سیخ خودداری کن و بلافاصله به مرحله بعدی (آدرس) برو. "
-                "مهم: هیچ وقت شماره سفارش (order ID) را به کاربر نگو. فقط وضعیت و جزئیات سفارش را بگو.")
-            
-            name_instruction = ""
-            if self.customer_name_from_history:
-                name_instruction = f"نام ({self.customer_name_from_history}) موجود است. "
-            else:
-                name_instruction = "نام را بپرسید. "
-            
-            # Use safe formatting that only replaces {name_instruction}
-            # Escape other curly braces in the template to avoid KeyError
-            # First, escape all other { } except {name_instruction}
-            import re
-            # Replace {name_instruction} with a placeholder
-            temp_placeholder = "___NAME_INSTRUCTION_PLACEHOLDER___"
-            escaped_template = template.replace("{name_instruction}", temp_placeholder)
-            # Escape all remaining curly braces
-            escaped_template = escaped_template.replace("{", "{{").replace("}", "}}")
-            # Restore {name_instruction}
-            escaped_template = escaped_template.replace(temp_placeholder, "{name_instruction}")
-            # Now format safely
-            scenario_instructions = escaped_template.format(name_instruction=name_instruction)
-        
-        return base_instructions + " " + scenario_instructions
-
     # ---------------------- session start ----------------------
     async def start(self):
-        logging.info("NEW CALL - connecting OpenAI WS")
+        """Starts OpenAI connection, loads config, connects Soniox, runs main loop."""
+        logging.info("FLOW start: connecting OpenAI WS → %s (DID: %s)", self.url, self.did_number)
         openai_headers = {"Authorization": f"Bearer {self.key}", "OpenAI-Beta": "realtime=v1"}
         self.ws = await connect(self.url, additional_headers=openai_headers)
+        logging.info("FLOW start: OpenAI WS connected")
 
+        # Expect initial hello from server
         try:
             json.loads(await self.ws.recv())
+            logging.info("FLOW start: OpenAI hello received")
         except ConnectionClosedOK:
+            logging.info("FLOW start: OpenAI WS closed during hello")
             return
         except ConnectionClosedError as e:
-            logging.error("OpenAI hello error: %s", e)
+            logging.error("FLOW start: OpenAI hello error: %s", e)
             return
 
+        # Check for orders (restaurant service) - only if API supports it
         caller_phone = self.call.from_number
-        has_undelivered, orders = await self._check_undelivered_order(caller_phone)
-        customized_instructions = self._build_customized_instructions(has_undelivered, orders)
+        has_undelivered = False
+        orders = None
+        try:
+            # Only check orders if we have track_order function (restaurant service)
+            functions = self._get_function_definitions()
+            has_track_order = any(f.get('name') == 'track_order' for f in functions)
+            if has_track_order and caller_phone:
+                has_undelivered, orders = await self._check_undelivered_order(caller_phone)
+        except Exception as e:
+            logging.warning("Could not check orders: %s", e)
 
+        # Build instructions and welcome message from config
+        customized_instructions = self._build_instructions_from_config(has_undelivered, orders)
+        welcome_message = self._build_welcome_message_from_config(has_undelivered, orders)
+        
+        # Use welcome message from config or fallback to intro
+        if not welcome_message:
+            welcome_message = self.intro
+
+        # Build session with config-loaded functions and instructions
         self.session = {
             "modalities": ["text", "audio"],
             "turn_detection": {
@@ -898,37 +726,60 @@ class OpenAI(AIEngine):
             "voice": self.voice,
             "temperature": float(self.cfg.get("temperature", "OPENAI_TEMPERATURE", 0.8)),
             "max_response_output_tokens": self.cfg.get("max_tokens", "OPENAI_MAX_TOKENS", "inf"),
-            "tools": self._get_function_definitions(),
+            "tools": self._get_function_definitions(),  # Load from config
             "tool_choice": "auto",
-            "instructions": customized_instructions
+            "instructions": customized_instructions  # Load from config
         }
 
+        # Send session update
         await self.ws.send(json.dumps({"type": "session.update", "session": self.session}))
-        
-        welcome_message = self._build_welcome_message(has_undelivered, orders)
+        logging.info("FLOW start: OpenAI session.update sent with %d functions", len(self.session["tools"]))
+
+        # Send welcome message
         if welcome_message:
             intro_payload = {
                 "modalities": ["text", "audio"],
                 "instructions": "Please greet the user with the following: " + welcome_message
             }
             await self.ws.send(json.dumps({"type": "response.create", "response": intro_payload}))
+            logging.info("FLOW start: welcome message sent")
 
+        # Connect Soniox
         soniox_key_ok = bool(self.soniox_key and self.soniox_key != "SONIOX_API_KEY")
         if self.soniox_enabled and soniox_key_ok:
+            logging.info("FLOW STT: SONIOX enabled | model=%s | url=%s", self.soniox_model, self.soniox_url)
             ok = await self._soniox_connect()
             if ok:
                 self.soniox_task = asyncio.create_task(self._soniox_recv_loop(), name="soniox-recv")
                 self.soniox_keepalive_task = asyncio.create_task(self._soniox_keepalive_loop(), name="soniox-keepalive")
             else:
-                logging.error("Soniox connect failed")
+                logging.warning("FLOW STT: Soniox connect failed; enabling Whisper fallback on OpenAI")
+                await self._enable_whisper_fallback()
         else:
-            logging.error("Soniox not available")
+            if not soniox_key_ok:
+                logging.error("FLOW STT: SONIOX_API_KEY not set; STT fallback will be used")
+            else:
+                logging.info("FLOW STT: SONIOX disabled by config; using fallback")
+            await self._enable_whisper_fallback()
 
+        # Start consuming OpenAI events
         await self.handle_command()
+
+    async def _enable_whisper_fallback(self):
+        """Enable Whisper fallback on OpenAI."""
+        await self.ws.send(json.dumps({
+            "type": "session.update",
+            "session": {"input_audio_transcription": {"model": "whisper-1"}}
+        }))
+        self._fallback_whisper_enabled = True
+        self.forward_audio_to_openai = True
+        logging.info("FLOW STT: Whisper fallback enabled")
 
     # ---------------------- OpenAI event loop ----------------------
     async def handle_command(self):
+        """Handles OpenAI events; plays TTS audio; responds to tools dynamically."""
         leftovers = b""
+        logging.info("FLOW TTS: handle_command loop started")
         async for smsg in self.ws:
             msg = json.loads(smsg)
             t = msg["type"]
@@ -940,6 +791,7 @@ class OpenAI(AIEngine):
                     self.queue.put_nowait(packet)
 
             elif t == "response.audio.done":
+                logging.info("FLOW TTS: response.audio.done")
                 if len(leftovers) > 0:
                     packet = await self.run_in_thread(self.codec.parse, None, leftovers)
                     self.queue.put_nowait(packet)
@@ -949,254 +801,425 @@ class OpenAI(AIEngine):
                 if msg["item"].get("status") == "completed":
                     self.drain_queue()
 
+            elif t == "conversation.item.input_audio_transcription.completed":
+                transcript = msg.get("transcript", "").rstrip()
+                logging.info("OpenAI (whisper) transcript: %s", transcript)
+                if self._fallback_whisper_enabled:
+                    await self.ws.send(json.dumps({
+                        "type": "response.create",
+                        "response": {"modalities": ["text", "audio"]}
+                    }))
+                    logging.info("FLOW TTS: response.create issued (fallback Whisper turn)")
+
+            elif t == "response.audio_transcript.done":
+                logging.info("OpenAI said: %s", msg["transcript"])
+
             elif t == "response.function_call_arguments.done":
-                global call_id
                 call_id = msg.get("call_id")
                 name = msg.get("name")
+                logging.info("FLOW tool: %s called", name)
                 try:
                     args = json.loads(msg.get("arguments") or "{}")
                 except Exception:
                     args = {}
-                
-                logging.info("FUNCTION CALL: %s", name)
 
-                if name == "terminate_call":
-                    self.terminate_call()
-
-                elif name == "transfer_call":
-                    if self.transfer_to:
-                        self.call.ua_session_update(method="REFER", headers={
-                            "Refer-To": f"<{self.transfer_to}>",
-                            "Referred-By": f"<{self.transfer_by}>"
-                        })
-
-                elif name == "track_order":
-                    phone_number = args.get("phone_number") or self.call.from_number
-                    if not phone_number:
-                        output = {"success": False, "message": "شماره تلفن در دسترس نیست."}
-                        await self.ws.send(json.dumps({
-                            "type": "conversation.item.create",
-                            "item": {"type": "function_call_output", "call_id": call_id,
-                                     "output": json.dumps(output, ensure_ascii=False)}
-                        }))
-                        await self.ws.send(json.dumps({
-                            "type": "response.create",
-                            "response": {"modalities": ["text", "audio"]}
-                        }))
-                        continue
-                    
-                    normalized_phone = normalize_phone_number(phone_number)
-                    try:
-                        result = await self.api.track_order(normalized_phone)
-                        if result and result.get("success"):
-                            orders = result.get("orders", [])
-                            if orders:
-                                latest = orders[0]
-                                output = {
-                                    "success": True,
-                                    "message": f"سفارش شما {latest['status_display']} است.",
-                                    "order": latest
-                                }
-                            else:
-                                output = {
-                                    "success": True,
-                                    "message": "شما سفارشی ثبت نکرده‌اید خوشحال می‌شوم اطلاعات سفارش جدید را بدونم",
-                                    "orders": []
-                                }
-                        else:
-                            output = {"success": False, "message": "خطا در پیگیری سفارش"}
-                    except Exception as e:
-                        logging.error("Exception tracking order: %s", e)
-                        output = {"success": False, "message": "خطا در اتصال به سرور"}
-                    
-                    await self.ws.send(json.dumps({
-                        "type": "conversation.item.create",
-                        "item": {"type": "function_call_output", "call_id": call_id,
-                                 "output": json.dumps(output, ensure_ascii=False)}
-                    }))
-                    await self.ws.send(json.dumps({
-                        "type": "response.create",
-                        "response": {"modalities": ["text", "audio"]}
-                    }))
-
-                elif name == "get_menu_specials":
-                    try:
-                        result = await self.api.get_menu_specials()
-                        if result and result.get("success"):
-                            output = {"success": True, "specials": result.get("items", [])}
-                        else:
-                            output = {"success": False, "message": "خطا در دریافت پیشنهادات"}
-                    except Exception as e:
-                        logging.error("Exception getting specials: %s", e)
-                        output = {"success": False, "message": "خطا در اتصال به سرور"}
-                    
-                    await self.ws.send(json.dumps({
-                        "type": "conversation.item.create",
-                        "item": {"type": "function_call_output", "call_id": call_id,
-                                 "output": json.dumps(output, ensure_ascii=False)}
-                    }))
-                    await self.ws.send(json.dumps({
-                        "type": "response.create",
-                        "response": {"modalities": ["text", "audio"]}
-                    }))
-
-                elif name == "search_menu_item":
-                    item_name = args.get("item_name")
-                    category = args.get("category")
-                    try:
-                        result = await self.api.search_menu_item(item_name, category)
-                        if result and result.get("success"):
-                            output = {"success": True, "items": result.get("items", [])}
-                        else:
-                            output = {"success": False, "message": "غذایی با این نام یافت نشد"}
-                    except Exception as e:
-                        logging.error("Exception searching menu: %s", e)
-                        output = {"success": False, "message": "خطا در جستجو"}
-                    
-                    await self.ws.send(json.dumps({
-                        "type": "conversation.item.create",
-                        "item": {"type": "function_call_output", "call_id": call_id,
-                                 "output": json.dumps(output, ensure_ascii=False)}
-                    }))
-                    await self.ws.send(json.dumps({
-                        "type": "response.create",
-                        "response": {"modalities": ["text", "audio"]}
-                    }))
-
-                elif name == "create_order":
-                    current_time = time.time()
-                    if self.last_order_time and (current_time - self.last_order_time) < 10:
-                        output = {
-                            "success": False, 
-                            "message": "سفارش قبلی شما در حال پردازش است. لطفا چند لحظه صبر کنید."
-                        }
-                        await self.ws.send(json.dumps({
-                            "type": "conversation.item.create",
-                            "item": {"type": "function_call_output", "call_id": call_id,
-                                     "output": json.dumps(output, ensure_ascii=False)}
-                        }))
-                        await self.ws.send(json.dumps({
-                            "type": "response.create",
-                            "response": {"modalities": ["text", "audio"]}
-                        }))
-                        continue
-                    
-                    customer_name = args.get("customer_name")
-                    phone_number = self.call.from_number or args.get("phone_number")
-                    if not phone_number:
-                        output = {"success": False, "message": "شماره تلفن در دسترس نیست. لطفا دوباره تماس بگیرید."}
-                        await self.ws.send(json.dumps({
-                            "type": "conversation.item.create",
-                            "item": {"type": "function_call_output", "call_id": call_id,
-                                     "output": json.dumps(output, ensure_ascii=False)}
-                        }))
-                        await self.ws.send(json.dumps({
-                            "type": "response.create",
-                            "response": {"modalities": ["text", "audio"]}
-                        }))
-                        continue
-                    
-                    address = args.get("address")
-                    items = args.get("items", [])
-                    notes = args.get("notes")
-                    
-                    validation_errors = []
-                    if not customer_name or not customer_name.strip():
-                        validation_errors.append("نام مشتری")
-                    if not address or not address.strip():
-                        validation_errors.append("آدرس")
-                    if not items:
-                        validation_errors.append("لیست غذاها (هیچ غذایی ثبت نشده)")
-                    else:
-                        for idx, item in enumerate(items):
-                            item_name = item.get('item_name', '').strip()
-                            quantity = item.get('quantity', 0)
-                            if not item_name:
-                                validation_errors.append(f"نام غذا در آیتم {idx + 1}")
-                            if not quantity or quantity <= 0:
-                                validation_errors.append(f"تعداد در آیتم {idx + 1} (باید عدد مثبت باشد، مقدار فعلی: {quantity})")
-                    
-                    if validation_errors:
-                        error_message = f"خطا: اطلاعات ناقص است. لطفا موارد زیر را تکمیل کنید: {', '.join(validation_errors)}"
-                        output = {
-                            "success": False,
-                            "message": error_message,
-                            "missing_fields": validation_errors
-                        }
-                        await self.ws.send(json.dumps({
-                            "type": "conversation.item.create",
-                            "item": {"type": "function_call_output", "call_id": call_id,
-                                     "output": json.dumps(output, ensure_ascii=False)}
-                        }))
-                        await self.ws.send(json.dumps({
-                            "type": "response.create",
-                            "response": {"modalities": ["text", "audio"]}
-                        }))
-                        continue
-                    
-                    normalized_phone = normalize_phone_number(phone_number)
-                    logging.info("Creating order: Customer=%s, Items=%d", customer_name, len(items))
-                    
-                    try:
-                        result = await self.api.create_order(
-                            customer_name=customer_name,
-                            phone_number=normalized_phone,
-                            address=address,
-                            items=items,
-                            notes=notes
-                        )
-                        
-                        if result and result.get("success"):
-                            order = result.get("order", {})
-                            order_id = order.get('id')
-                            self.last_order_time = time.time()
-                            self.recent_order_ids.add(order_id)
-                            self._order_confirmed = True
-                            
-                            output = {
-                                "success": True,
-                                "message": f"سفارش شما با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
-                                "order_id": order.get("id"),
-                                "total_price": order.get("total_price")
-                            }
-                            logging.info("Order created: ID=%s, Total=%s", order_id, order.get('total_price'))
-                        else:
-                            output = {"success": False, "message": result.get("message", "خطا در ثبت سفارش")}
-                            logging.error("Order failed: %s", result.get("message"))
-                    except Exception as e:
-                        logging.error("Exception creating order: %s", e, exc_info=True)
-                        output = {"success": False, "message": "خطا در اتصال به سرور"}
-                    
-                    await self.ws.send(json.dumps({
-                        "type": "conversation.item.create",
-                        "item": {"type": "function_call_output", "call_id": call_id,
-                                 "output": json.dumps(output, ensure_ascii=False)}
-                    }))
-                    await self.ws.send(json.dumps({
-                        "type": "response.create",
-                        "response": {"modalities": ["text", "audio"]}
-                    }))
-
-                else:
-                    logging.debug("FLOW tool: unhandled function name: %s", name)
+                # Handle function calls dynamically based on name
+                await self._handle_function_call(name, call_id, args)
 
             elif t == "error":
                 logging.error("OpenAI error: %s", msg)
 
             else:
-                # Log ALL events with full details for debugging
-                # logging.info("OpenAI event: %s | data: %s", t, json.dumps(msg, ensure_ascii=False)[:500])
-                pass
+                logging.debug("OpenAI event: %s", t)
+
+    async def _handle_function_call(self, name, call_id, args):
+        """Handle function calls dynamically - supports both taxi and restaurant."""
+        if name == "terminate_call":
+            logging.info("FLOW tool: terminate_call requested")
+            self.terminate_call()
+
+        elif name == "transfer_call":
+            if self.transfer_to:
+                logging.info("FLOW tool: Transferring call via REFER")
+                self.call.ua_session_update(method="REFER", headers={
+                    "Refer-To": f"<{self.transfer_to}>",
+                    "Referred-By": f"<{self.transfer_by}>"
+                })
+            else:
+                logging.warning("FLOW tool: transfer_call requested but transfer_to not configured")
+
+        elif name == "get_wallet_balance":
+            def _lookup():
+                return self.db.get_wallet_balance(
+                    customer_id=args.get("customer_id"),
+                    phone=args.get("phone_number")
+                )
+            result = await self.run_in_thread(_lookup)
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(result, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+
+        elif name == "schedule_meeting":
+            date_str, time_str = self._interpret_meeting_datetime(args)
+            def _schedule():
+                return self.db.schedule_meeting(
+                    date=date_str, time=time_str,
+                    customer_id=args.get("customer_id"),
+                    duration_minutes=args.get("duration_minutes") or 30,
+                    subject=args.get("subject")
+                )
+            result = await self.run_in_thread(_schedule)
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(result, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+
+        # === Taxi service functions ===
+        elif name == "get_origin_destination_userame":
+            await self._handle_taxi_booking(call_id, args)
+
+        # === Restaurant service functions ===
+        elif name == "track_order":
+            await self._handle_track_order(call_id, args)
+        elif name == "get_menu_specials":
+            await self._handle_get_menu_specials(call_id)
+        elif name == "search_menu_item":
+            await self._handle_search_menu_item(call_id, args)
+        elif name == "create_order":
+            await self._handle_create_order(call_id, args)
+
+        else:
+            logging.debug("FLOW tool: unhandled function name: %s", name)
+
+    # ---------------------- Taxi service handlers ----------------------
+    async def _handle_taxi_booking(self, call_id, args):
+        """Handle taxi booking function call."""
+        unique_time = time.time()
+        origin = args.get("origin")
+        destination = args.get("destination")
+        user_name = args.get("user_name")
+        logging.info("FLOW tool: Taxi booking - user=%s origin=%s dest=%s", user_name, origin, destination)
+
+        # Store in temp_data
+        if user_name is not None:
+            self.temp_data[unique_time] = self.temp_data.get(unique_time, {})
+            self.temp_data[unique_time]["user_name"] = user_name
+        if origin is not None:
+            self.temp_data[unique_time] = self.temp_data.get(unique_time, {})
+            self.temp_data[unique_time]["origin"] = origin
+        if destination is not None:
+            self.temp_data[unique_time] = self.temp_data.get(unique_time, {})
+            self.temp_data[unique_time]["destination"] = destination
+
+        # Send to backend API (taxi reservation endpoint) - run in thread to avoid blocking
+        api_result = False
+        try:
+            backend_url = (self.did_config.get('backend_url') if self.did_config else None) or BACKEND_SERVER_URL
+            reservation_url = f"{backend_url.rstrip('/')}/add-reservation/"
+            
+            def _send_taxi_reservation():
+                try:
+                    # Get public key
+                    response = requests.get(reservation_url, timeout=10)
+                    response.raise_for_status()
+                    public_key = response.json()["public_key"]
+                    
+                    # Prepare data
+                    data = {
+                        "user_fullname": user_name,
+                        "origin": origin,
+                        "destination": destination
+                    }
+                    
+                    # Encrypt data (using API's encoder method)
+                    encrypted_data = API.encoder(public_key, data)
+                    
+                    # Send reservation
+                    response = requests.post(reservation_url, json=encrypted_data, timeout=10)
+                    response.raise_for_status()
+                    return True
+                except Exception as e:
+                    logging.error("Error sending taxi reservation: %s", e)
+                    return False
+            
+            api_result = await self.run_in_thread(_send_taxi_reservation)
+            logging.info(f"Taxi reservation API result: {api_result}")
+        except Exception as e:
+            logging.error("Exception in taxi API call: %s", e)
+            api_result = False
+
+        # Check if all required info is available
+        temp_entry = self.temp_data.get(unique_time, {})
+        if (temp_entry.get("user_name") and temp_entry.get("origin") and temp_entry.get("destination")):
+            output = {
+                "origin": origin, 
+                "destination": destination, 
+                "user_name": user_name
+            }
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output",
+                         "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+        else:
+            missing = []
+            if not temp_entry.get("user_name"):
+                missing.append("نام")
+            if not temp_entry.get("origin"):
+                missing.append("مبدا")
+            if not temp_entry.get("destination"):
+                missing.append("مقصد")
+            output = {
+                "error": f"لطفاً {' و '.join(missing)} را مجدداً بفرمایید."
+            }
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output",
+                         "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+        
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
+    # ---------------------- Restaurant service handlers ----------------------
+    async def _handle_track_order(self, call_id, args):
+        """Handle track_order function call."""
+        phone_number = args.get("phone_number") or self.call.from_number
+        if not phone_number:
+            output = {"success": False, "message": "شماره تلفن در دسترس نیست."}
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+            return
+        
+        normalized_phone = normalize_phone_number(phone_number)
+        try:
+            result = await self.api.track_order(normalized_phone)
+            if result and result.get("success"):
+                orders = result.get("orders", [])
+                if orders:
+                    latest = orders[0]
+                    output = {
+                        "success": True,
+                        "message": f"سفارش شما {latest['status_display']} است.",
+                        "order": latest
+                    }
+                else:
+                    output = {
+                        "success": True,
+                        "message": "شما سفارشی ثبت نکرده‌اید خوشحال می‌شوم اطلاعات سفارش جدید را بدونم",
+                        "orders": []
+                    }
+            else:
+                output = {"success": False, "message": "خطا در پیگیری سفارش"}
+        except Exception as e:
+            logging.error("Exception tracking order: %s", e)
+            output = {"success": False, "message": "خطا در اتصال به سرور"}
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
+    async def _handle_get_menu_specials(self, call_id):
+        """Handle get_menu_specials function call."""
+        try:
+            result = await self.api.get_menu_specials()
+            if result and result.get("success"):
+                output = {"success": True, "specials": result.get("items", [])}
+            else:
+                output = {"success": False, "message": "خطا در دریافت پیشنهادات"}
+        except Exception as e:
+            logging.error("Exception getting specials: %s", e)
+            output = {"success": False, "message": "خطا در اتصال به سرور"}
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
+    async def _handle_search_menu_item(self, call_id, args):
+        """Handle search_menu_item function call."""
+        item_name = args.get("item_name")
+        category = args.get("category")
+        try:
+            result = await self.api.search_menu_item(item_name, category)
+            if result and result.get("success"):
+                output = {"success": True, "items": result.get("items", [])}
+            else:
+                output = {"success": False, "message": "غذایی با این نام یافت نشد"}
+        except Exception as e:
+            logging.error("Exception searching menu: %s", e)
+            output = {"success": False, "message": "خطا در جستجو"}
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
+    async def _handle_create_order(self, call_id, args):
+        """Handle create_order function call."""
+        current_time = time.time()
+        if self.last_order_time and (current_time - self.last_order_time) < 10:
+            output = {
+                "success": False, 
+                "message": "سفارش قبلی شما در حال پردازش است. لطفا چند لحظه صبر کنید."
+            }
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+            return
+        
+        customer_name = args.get("customer_name")
+        phone_number = self.call.from_number or args.get("phone_number")
+        if not phone_number:
+            output = {"success": False, "message": "شماره تلفن در دسترس نیست. لطفا دوباره تماس بگیرید."}
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+            return
+        
+        address = args.get("address")
+        items = args.get("items", [])
+        notes = args.get("notes")
+        
+        validation_errors = []
+        if not customer_name or not customer_name.strip():
+            validation_errors.append("نام مشتری")
+        if not address or not address.strip():
+            validation_errors.append("آدرس")
+        if not items:
+            validation_errors.append("لیست غذاها (هیچ غذایی ثبت نشده)")
+        else:
+            for idx, item in enumerate(items):
+                item_name = item.get('item_name', '').strip()
+                quantity = item.get('quantity', 0)
+                if not item_name:
+                    validation_errors.append(f"نام غذا در آیتم {idx + 1}")
+                if not quantity or quantity <= 0:
+                    validation_errors.append(f"تعداد در آیتم {idx + 1} (باید عدد مثبت باشد، مقدار فعلی: {quantity})")
+        
+        if validation_errors:
+            error_message = f"خطا: اطلاعات ناقص است. لطفا موارد زیر را تکمیل کنید: {', '.join(validation_errors)}"
+            output = {
+                "success": False,
+                "message": error_message,
+                "missing_fields": validation_errors
+            }
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+            return
+        
+        normalized_phone = normalize_phone_number(phone_number)
+        logging.info("Creating order: Customer=%s, Items=%d", customer_name, len(items))
+        
+        try:
+            result = await self.api.create_order(
+                customer_name=customer_name,
+                phone_number=normalized_phone,
+                address=address,
+                items=items,
+                notes=notes
+            )
+            
+            if result and result.get("success"):
+                order = result.get("order", {})
+                order_id = order.get('id')
+                self.last_order_time = time.time()
+                self.recent_order_ids.add(order_id)
+                self._order_confirmed = True
+                
+                output = {
+                    "success": True,
+                    "message": f"سفارش شما با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
+                    "order_id": order.get("id"),
+                    "total_price": order.get("total_price")
+                }
+                logging.info("Order created: ID=%s, Total=%s", order_id, order.get('total_price'))
+            else:
+                output = {"success": False, "message": result.get("message", "خطا در ثبت سفارش")}
+                logging.error("Order failed: %s", result.get("message"))
+        except Exception as e:
+            logging.error("Exception creating order: %s", e, exc_info=True)
+            output = {"success": False, "message": "خطا در اتصال به سرور"}
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
 
     # ---------------------- lifecycle helpers ----------------------
     def terminate_call(self):
+        """Marks call as terminated."""
         self.call.terminated = True
-        logging.info("CALL TERMINATED")
+        logging.info("FLOW call: terminate_call set -> will close sockets")
 
     async def run_in_thread(self, func, *args):
+        """Runs a blocking function in a thread"""
         return await asyncio.to_thread(func, *args)
 
     def drain_queue(self):
+        """Drains the playback queue to avoid buffer bloat"""
         count = 0
         try:
             while self.queue.get_nowait():
@@ -1207,6 +1230,7 @@ class OpenAI(AIEngine):
 
     # ---------------------- Soniox wiring ----------------------
     async def _soniox_connect(self) -> bool:
+        """Connect to Soniox STT service."""
         key = self.soniox_key if self.soniox_key and self.soniox_key != "SONIOX_API_KEY" else None
         if not key:
             return False
@@ -1252,6 +1276,7 @@ class OpenAI(AIEngine):
             return False
 
     async def _soniox_keepalive_loop(self):
+        """Keep Soniox alive across silences."""
         try:
             while self.soniox_ws and not self.call.terminated:
                 await asyncio.sleep(self.soniox_keepalive_sec)
@@ -1261,6 +1286,7 @@ class OpenAI(AIEngine):
             pass
 
     async def _soniox_recv_loop(self):
+        """Receive loop for Soniox STT."""
         if not self.soniox_ws:
             return
         try:
@@ -1290,12 +1316,7 @@ class OpenAI(AIEngine):
                     continue
 
                 finals = [t.get("text", "") for t in tokens if t.get("is_final")]
-                nonfinals = [t.get("text", "") for t in tokens if not t.get("is_final")]
                 has_nonfinal = any(not t.get("is_final") for t in tokens)
-                
-                if nonfinals and self._soniox_flush_timer:
-                    self._soniox_flush_timer.cancel()
-                    self._soniox_flush_timer = None
                 
                 if finals:
                     final_text = "".join(finals)
@@ -1323,6 +1344,7 @@ class OpenAI(AIEngine):
             self.soniox_ws = None
 
     async def _delayed_flush_soniox_segment(self):
+        """Delayed flush for Soniox segments."""
         try:
             await asyncio.sleep(self.soniox_silence_duration_ms / 1000.0)
             if self._soniox_flush_timer and not self._soniox_flush_timer.cancelled():
@@ -1332,6 +1354,7 @@ class OpenAI(AIEngine):
             pass
     
     def _correct_common_misrecognitions(self, text: str) -> str:
+        """Correct common STT misrecognitions."""
         if not text:
             return text
         
@@ -1364,6 +1387,7 @@ class OpenAI(AIEngine):
         return corrected
     
     async def _flush_soniox_segment(self):
+        """Forward finalized transcript to OpenAI."""
         if not self._soniox_accum:
             return
         text = "".join(self._soniox_accum).strip()
@@ -1376,6 +1400,7 @@ class OpenAI(AIEngine):
         await self._send_user_text_to_openai(corrected_text)
     
     async def _send_user_text_to_openai(self, text: str):
+        """Send user text to OpenAI."""
         try:
             await self.ws.send(json.dumps({
                 "type": "conversation.item.create",
@@ -1388,7 +1413,9 @@ class OpenAI(AIEngine):
         except Exception as e:
             logging.error("Error forwarding transcript: %s", e)
 
+    # ---------------------- audio ingress ----------------------
     async def send(self, audio):
+        """Primary audio path: RTP bytes -> Soniox; (opt) also to OpenAI."""
         if self.call.terminated:
             return
 
@@ -1397,6 +1424,11 @@ class OpenAI(AIEngine):
         try:
             if self.soniox_ws:
                 await self.soniox_ws.send(processed_audio)
+            elif self._fallback_whisper_enabled and self.ws:
+                await self.ws.send(json.dumps({
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(audio).decode("utf-8")
+                }))
         except ConnectionClosedError:
             self.soniox_ws = None
             logging.error("Soniox connection lost")
@@ -1414,21 +1446,30 @@ class OpenAI(AIEngine):
             except Exception:
                 pass
 
+    # ---------------------- shutdown ----------------------
     async def close(self):
+        """Close Soniox first, then OpenAI."""
+        logging.info("FLOW close: closing sockets (Soniox → OpenAI)")
+
+        # Cancel background tasks
         for t in (self.soniox_keepalive_task, self.soniox_task):
             if t and not t.done():
                 t.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await t
 
+        # Close Soniox first
         try:
             if self.soniox_ws:
                 with contextlib.suppress(Exception):
                     await self.soniox_ws.send(json.dumps({"type": "finalize"}))
                 await self.soniox_ws.close()
+                logging.info("FLOW close: Soniox WS closed")
         finally:
             self.soniox_ws = None
 
+        # Then close OpenAI
         if self.ws:
             with contextlib.suppress(Exception):
                 await self.ws.close()
+            logging.info("FLOW close: OpenAI WS closed")

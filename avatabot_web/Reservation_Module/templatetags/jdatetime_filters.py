@@ -30,6 +30,16 @@ def jalali_date_short(dt):
 
 @register.filter
 def jalali_datetime(dt):
-    """Full datetime format: 1403/08/18 14:30:00"""
-    return jalali_date(dt, '%Y/%m/%d %H:%M:%S')
+    """Full datetime format: Year:Month:Day - Hour:Minute:Second (e.g., 1404:08:21 - 01:45:24)"""
+    if dt is None:
+        return ''
+    jdt = datetime_to_jdatetime(dt)
+    if jdt is None:
+        return ''
+    # Explicitly construct in the correct order: Year:Month:Day - Hour:Minute:Second
+    # Use Unicode Left-to-Right Mark (U+200E) to prevent RTL reversal
+    date_part = jdt.strftime('%Y:%m:%d')
+    time_part = jdt.strftime('%H:%M:%S')
+    # Add LRM at the start to force LTR direction
+    return f'\u200E{date_part} - {time_part}'
 

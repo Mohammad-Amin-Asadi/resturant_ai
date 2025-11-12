@@ -25,11 +25,11 @@
                 </div>
             </div>
             <div class="status">
-                <div class="hint">Back to <a href="{% url 'order_list_url' %}" class="success">Orders List</a></div>
+                <div class="hint">Back to <a href="{% url 'restaurant:order_list_url' %}" class="success">Orders List</a></div>
             </div>
         </header>
 
-        <form method="post" action="{% url 'settings_url' %}" id="taxiForm" autocomplete="on">
+        <form method="post" action="" id="taxiForm" autocomplete="on">
             {% csrf_token %}
             {{ form.errors }}
 
@@ -57,7 +57,7 @@
                     <button type="submit" class="btn send">
                         Submit
                     </button>
-                    <a href="{% url 'settings_url' %}" class="btn ghost">Clear</a>
+                    <a href="" class="btn ghost">Clear</a>
                 </div>
                 <div class="hint"<strong>Submit</strong>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Architecto, sequi!
                 </div>

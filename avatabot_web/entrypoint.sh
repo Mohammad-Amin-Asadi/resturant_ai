@@ -25,6 +25,11 @@ python manage.py migrate --noinput
 
 echo "Migrations completed successfully!"
 
-# Execute the main command (runserver or whatever is passed)
-exec "$@"
+# If no command provided, start both servers
+if [ $# -eq 0 ]; then
+    exec /app/start_servers.sh
+else
+    # Execute the main command (runserver or whatever is passed)
+    exec "$@"
+fi
 
