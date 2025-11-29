@@ -3,3 +3,8 @@ src/__pycache__/*
 *\.ini
 .venv
 docker/.env
+roshanfekr/*
+test/*
+MULTI_TENANT_SETUP.md
+MULTI_TENANT_SETUP.md
+test/

@@ -6,11 +6,11 @@
   "backend_url": "http://localhost:8001",
   
   "openai": {
-    "model": "gpt-realtime-2025-08-28",
+    "model": "gpt-4o-realtime-preview-2024-10-01",
     "voice": "alloy",
     "temperature": 0.8,
-    "welcome_message": "سلام و درود بر شما، با تاکسی وی آی پی تماس گرفته اید، لطفا جهت رزرو تاکسی نام خود را بفرمایید.",
-    "intro": "سلام و درود بر شما، با تاکسی وی آی پی تماس گرفته اید، لطفا جهت رزرو تاکسی نام خود را بفرمایید."
+    "welcome_message": "درود برشما، با تاکسی وی آی پی تماس گرفته اید، لطفا جهت رزرو تاکسی نام خود را بفرمایید.",
+    "intro": " درود برشما، با تاکسی وی آی پی تماس گرفته اید، لطفا جهت رزرو تاکسی نام خود را بفرمایید."
   },
   
   "soniox": {
@@ -29,8 +29,8 @@
   "scenarios": {
     "new_customer": {
       "welcome_templates": {
-        "with_customer_name": "سلام و درود بر شما {customer_name} عزیز، با {service_name} تماس گرفته‌اید",
-        "without_customer_name": "سلام و درود بر شما، با {service_name} تماس گرفته‌اید",
+        "with_customer_name": "درود بر شما {customer_name} عزیز، با {service_name} تماس گرفته‌اید",
+        "without_customer_name": "درود بر شما، با {service_name} تماس گرفته‌اید",
         "new_customer_question": " لطفا جهت رزرو تاکسی نام خود را بفرمایید."
       }
     }

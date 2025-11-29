@@ -6,7 +6,7 @@
   "backend_url": "http://localhost:8000",
   
   "openai": {
-    "model": "gpt-realtime-2025-08-28",
+    "model": "gpt-4o-realtime-preview-2024-10-01",
     "voice": "alloy",
     "temperature": 0.8,
     "welcome_message": "درودبرشما، با رستوران بزرگمهر تماس گرفته‌اید.لطفا سفارشتون رو بفرمایید تا ثبت کنم.",

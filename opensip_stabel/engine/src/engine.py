@@ -77,14 +77,25 @@ calls = {}
 
 
 def mi_reply(key, method, code, reason, body=None):
-    """ Replies to the server """
+    """ Replies to the server - handles errors gracefully """
     params = {'key': key,
               'method': method,
               'code': code,
               'reason': reason}
     if body:
         params["body"] = body
-    mi_conn.execute('ua_session_reply', params)
+    
+    try:
+        mi_conn.execute('ua_session_reply', params)
+    except OpenSIPSMIException as e:
+        # If reply fails, log it but don't raise - transaction might already be closed
+        error_msg = str(e)
+        if "Failed to send reply" in error_msg or "transaction" in error_msg.lower():
+            # This is expected when rejecting calls or transaction is already closed
+            logging.debug(f"⚠️ Could not send reply {code} for {key}: {error_msg} (transaction may be closed)")
+        else:
+            logging.warning(f"⚠️ Failed to send reply {code} for {key}: {error_msg}")
+        # Don't re-raise - we've already logged the issue
 
 
 def fetch_bot_config(api_url, bot):
@@ -196,7 +207,12 @@ def handle_call(call, key, method, params):
                 is_valid_phone, caller_number = validate_caller_number(from_header)
 
                 if not is_valid_phone:
-                    logging.warning(f"❌ Rejecting call from non-Iranian number: {from_header}")
+                    logging.warning("\n" + "=" * 80)
+                    logging.warning("🚫 CALL REJECTED: Non-Iranian Mobile Number")
+                    logging.warning("Call ID: %s", key)
+                    logging.warning("From Header: %s", from_header)
+                    logging.warning("Reason: Only Iranian mobile numbers are allowed")
+                    logging.warning("=" * 80)
                     mi_reply(key, method, 403, 'Forbidden - Only Iranian Mobile Numbers Allowed')
                     return
                 
@@ -242,24 +258,42 @@ def handle_call(call, key, method, params):
             
             mi_reply(key, method, 200, 'OK', new_call.get_body())
         except UnsupportedCodec:
-            logging.error("\n" + "=" * 80)
-            logging.error("❌ CALL REJECTED: Unsupported Codec")
-            logging.error("=" * 80)
+            logging.warning("\n" + "=" * 80)
+            logging.warning("🚫 CALL REJECTED: Unsupported Codec")
+            logging.warning("Call ID: %s", key)
+            logging.warning("Reason: Codec not supported by system")
+            logging.warning("=" * 80)
             mi_reply(key, method, 488, 'Not Acceptable Here')
         except UnknownSIPUser:
-            logging.error("\n" + "=" * 80)
-            logging.error("❌ CALL REJECTED: Unknown SIP User")
-            logging.error("=" * 80)
+            logging.warning("\n" + "=" * 80)
+            logging.warning("🚫 CALL REJECTED: Unknown SIP User")
+            logging.warning("Call ID: %s", key)
+            logging.warning("Reason: SIP user not found in configuration")
+            logging.warning("=" * 80)
             mi_reply(key, method, 404, 'Not Found')
-        except OpenSIPSMIException:
-            logging.exception("Error sending response")
-            mi_reply(key, method, 500, 'Server Internal Error')
+        except OpenSIPSMIException as e:
+            # If we already tried to send a reply and it failed, don't try again
+            error_msg = str(e)
+            if "Failed to send reply" in error_msg:
+                logging.debug("⚠️ Previous reply attempt failed, skipping additional reply")
+            else:
+                logging.warning(f"⚠️ OpenSIPS MI error: {error_msg}")
+                # Only try to send error reply if it's not a "failed to send reply" error
+                if "Failed to send reply" not in error_msg:
+                    mi_reply(key, method, 500, 'Server Internal Error')
         except Exception as e:  # pylint: disable=broad-exception-caught
             logging.error("\n" + "=" * 80)
-            logging.error("❌ CALL REJECTED: Exception - %s", e)
+            logging.error("❌ CALL REJECTED: Unexpected Exception")
+            logging.error("Call ID: %s", key)
+            logging.error("Exception: %s", type(e).__name__)
+            logging.error("Message: %s", str(e))
             logging.error("=" * 80)
-            logging.exception("Error creating call %s", e)
-            mi_reply(key, method, 500, 'Server Internal Error')
+            logging.exception("Full traceback:")
+            # Try to send error reply, but don't fail if it doesn't work
+            try:
+                mi_reply(key, method, 500, 'Server Internal Error')
+            except Exception:
+                logging.debug("Could not send error reply (transaction may be closed)")
     
     elif method == 'NOTIFY':
         mi_reply(key, method, 200, 'OK')
@@ -320,12 +354,42 @@ async def shutdown(s, loop, event):
         if call.terminated:
             continue
         await call.close()
-    try:
-        event.unsubscribe()
-    except OpenSIPSEventException as e:
-        logging.error("Error unsubscribing from event: %s", e)
-    except OpenSIPSMIException as e:
-        logging.error("Error unsubscribing from event: %s", e)
+    
+    # Try to unsubscribe from events gracefully with timeout
+    if event:
+        try:
+            # Close the socket first to release the port
+            if hasattr(event, 'socket') and hasattr(event.socket, 'sock'):
+                try:
+                    event.socket.sock.close()
+                    logging.info("Closed event socket")
+                except Exception as e:
+                    logging.debug("Error closing socket: %s", e)
+            
+            # Use asyncio.wait_for to add a timeout to unsubscribe
+            await asyncio.wait_for(
+                asyncio.to_thread(event.unsubscribe),
+                timeout=2.0
+            )
+            logging.info("Successfully unsubscribed from OpenSIPS events")
+        except asyncio.TimeoutError:
+            logging.warning("Timeout unsubscribing from OpenSIPS events (OpenSIPS may be unavailable)")
+        except OpenSIPSEventException as e:
+            error_msg = str(e)
+            if "timed out" in error_msg.lower() or "connection" in error_msg.lower():
+                logging.warning("Could not unsubscribe from events (OpenSIPS connection issue): %s", e)
+            else:
+                logging.warning("Error unsubscribing from event: %s", e)
+        except OpenSIPSMIException as e:
+            error_msg = str(e)
+            if "timed out" in error_msg.lower() or "connection" in error_msg.lower():
+                logging.warning("Could not unsubscribe from events (OpenSIPS connection issue): %s", e)
+            else:
+                logging.warning("Error unsubscribing from event: %s", e)
+        except Exception as e:
+            # Catch any other exceptions during unsubscribe
+            logging.warning("Unexpected error during unsubscribe (non-critical): %s", e)
+    
     await asyncio.gather(*tasks, return_exceptions=True)
     loop.stop()
     logging.info("Shutdown complete.")
@@ -334,13 +398,66 @@ async def shutdown(s, loop, event):
 async def async_run():
     """ Main function """
     host_ip = Config.engine("event_ip", "EVENT_IP", "127.0.0.1")
+    # Use port 0 (random port) to avoid conflicts with stale processes
+    # This allows the OS to assign any available port
     port = int(Config.engine("event_port", "EVENT_PORT", "0"))
-
+    
+    # Wait for OpenSIPS to be ready and any stale sockets to be released
+    await asyncio.sleep(1.0)
+    
     handler = OpenSIPSEventHandler(mi_conn, "datagram", ip=host_ip, port=port)
-    try:
-        event = handler.async_subscribe("E_UA_SESSION", udp_handler)
-    except OpenSIPSEventException as e:
-        logging.error("Error subscribing to event: %s", e)
+    
+    # Retry logic for "Address already in use" error
+    # If port is 0, this should rarely happen, but we handle it anyway
+    max_retries = 10
+    retry_delay = 0.5  # Start with 0.5 seconds
+    event = None
+    
+    for attempt in range(max_retries):
+        try:
+            event = handler.async_subscribe("E_UA_SESSION", udp_handler)
+            break  # Success, exit retry loop
+        except (OpenSIPSEventException, OSError, Exception) as e:
+            # Check if it's an "Address already in use" error
+            is_address_in_use = False
+            
+            # Check OSError directly
+            if isinstance(e, OSError) and e.errno == 98:  # EADDRINUSE
+                is_address_in_use = True
+            # Check exception message
+            elif "address already in use" in str(e).lower() or "errno 98" in str(e).lower():
+                is_address_in_use = True
+            # Check exception chain (in case OSError is wrapped)
+            elif hasattr(e, '__cause__') and isinstance(e.__cause__, OSError):
+                if e.__cause__.errno == 98:
+                    is_address_in_use = True
+            elif hasattr(e, '__context__') and isinstance(e.__context__, OSError):
+                if e.__context__.errno == 98:
+                    is_address_in_use = True
+            
+            if is_address_in_use:
+                if attempt < max_retries - 1:
+                    logging.warning(
+                        "Address already in use (attempt %d/%d). "
+                        "Waiting %.1f seconds before retry...",
+                        attempt + 1, max_retries, retry_delay
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logging.error(
+                        "Failed to bind socket after %d attempts. "
+                        "The address may still be in use. Error: %s",
+                        max_retries, e
+                    )
+                    return
+            else:
+                # Different error, don't retry
+                logging.error("Error subscribing to event: %s", e)
+                return
+    
+    if event is None:
+        logging.error("Failed to subscribe to event after all retries")
         return
 
     _, port = event.socket.sock.getsockname()

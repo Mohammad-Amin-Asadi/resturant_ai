@@ -18,6 +18,7 @@ import os
 import re
 import audioop
 import requests
+import urllib.parse
 from queue import Empty
 from datetime import datetime, timedelta
 from websockets.asyncio.client import connect
@@ -29,6 +30,7 @@ from storage import WalletMeetingDB
 from api_sender import API
 from phone_normalizer import normalize_phone_number
 from did_config import load_did_config
+from sms_service import sms_service
 
 try:
     from zoneinfo import ZoneInfo
@@ -334,6 +336,89 @@ class OpenAI(AIEngine):
             return f"{hh:02d}:{mm:02d}"
         return None
 
+    def _fetch_weather(self, city: str):
+        """Fetch weather information for a city from one-api.ir and format in Persian."""
+        if not city:
+            return {"error": "نام شهر مشخص نشده است."}
+        
+        try:
+            # Weather API configuration
+            weather_token = "529569:691436185e3d0"
+            weather_url = "https://one-api.ir/weather/"
+            
+            # URL encode the city name
+            city_encoded = urllib.parse.quote(city)
+            api_url = f"{weather_url}?token={weather_token}&action=current&city={city_encoded}"
+            
+            # Start timing
+            api_start_time = time.time()
+            logging.info(f"⏱️  Weather API: Starting API call for city: {city} at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
+            logging.info(f"🌐 Weather API: URL: {api_url}")
+            
+            # Make HTTP request (using requests since we're in a thread)
+            response = requests.get(api_url, timeout=10)
+            
+            # Calculate API call duration
+            api_end_time = time.time()
+            api_duration = (api_end_time - api_start_time) * 1000  # Convert to milliseconds
+            logging.info(f"✅ Weather API: Response received at {datetime.now().strftime('%H:%M:%S.%f')[:-3]} | API call duration: {api_duration:.2f}ms")
+            
+            response.raise_for_status()
+            data = response.json()
+            
+            # Check API response status
+            if data.get("status") != 200:
+                error_msg = data.get("error", "خطا در دریافت اطلاعات آب و هوا")
+                logging.error(f"Weather API error: {error_msg}")
+                return {"error": f"خطا در دریافت اطلاعات آب و هوا: {error_msg}"}
+            
+            result = data.get("result", {})
+            if not result:
+                return {"error": "اطلاعات آب و هوا یافت نشد."}
+            
+            # Extract weather information
+            weather_info = result.get("weather", [{}])[0]
+            main_info = result.get("main", {})
+            wind_info = result.get("wind", {})
+            
+            # Format Persian response
+            description = weather_info.get("description", "نامشخص")
+            temp = main_info.get("temp", 0)
+            feels_like = main_info.get("feels_like", 0)
+            humidity = main_info.get("humidity", 0)
+            wind_speed = wind_info.get("speed", 0)
+            
+            # Create a natural Persian description
+            weather_text = (
+                f"وضعیت آب و هوای {city}:\n"
+                f"شرایط: {description}\n"
+                f"دما: {temp:.1f} درجه سانتی‌گراد\n"
+                f"احساس دما: {feels_like:.1f} درجه سانتی‌گراد\n"
+                f"رطوبت: {humidity} درصد\n"
+                f"سرعت باد: {wind_speed:.1f} متر بر ثانیه"
+            )
+            
+            logging.info(f"📊 Weather API: Successfully fetched weather for {city} | Total processing time: {(time.time() - api_start_time) * 1000:.2f}ms")
+            return {
+                "city": city,
+                "description": description,
+                "temperature": temp,
+                "feels_like": feels_like,
+                "humidity": humidity,
+                "wind_speed": wind_speed,
+                "weather_text": weather_text
+            }
+            
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Weather API request error: {e}")
+            return {"error": f"خطا در ارتباط با سرویس آب و هوا: {str(e)}"}
+        except json.JSONDecodeError as e:
+            logging.error(f"Weather API JSON decode error: {e}")
+            return {"error": "خطا در پردازش اطلاعات دریافتی از سرویس آب و هوا."}
+        except Exception as e:
+            logging.error(f"Weather API unexpected error: {e}", exc_info=True)
+            return {"error": f"خطای غیرمنتظره در دریافت اطلاعات آب و هوا: {str(e)}"}
+
     def _interpret_meeting_datetime(self, args: dict):
         now = self._now_tz()
         raw_date = args.get("date")
@@ -558,21 +643,21 @@ class OpenAI(AIEngine):
         # Build base greeting with fallbacks
         if self.customer_name_from_history:
             base_greeting_template = welcome_templates.get('with_customer_name', 
-                "سلام و درودبرشما {customer_name} عزیز، با {service_name} تماس گرفته‌اید")
+                "درودبرشما {customer_name} عزیز، با {service_name} تماس گرفته‌اید")
             try:
                 base_greeting = base_greeting_template.format(
                     customer_name=self.customer_name_from_history,
                     service_name=service_name
                 )
             except Exception:
-                base_greeting = f"سلام و درودبرشما {self.customer_name_from_history} عزیز، با {service_name} تماس گرفته‌اید"
+                base_greeting = f"درودبرشما {self.customer_name_from_history} عزیز، با {service_name} تماس گرفته‌اید"
         else:
             base_greeting_template = welcome_templates.get('without_customer_name',
-                "سلام و درودبرشما، با {service_name} تماس گرفته‌اید")
+                "درودبرشما، با {service_name} تماس گرفته‌اید")
             try:
                 base_greeting = base_greeting_template.format(service_name=service_name)
             except Exception:
-                base_greeting = f"سلام و درودبرشما، با {service_name} تماس گرفته‌اید"
+                base_greeting = f"درودبرشما، با {service_name} تماس گرفته‌اید"
         
         # Add scenario-specific content (only for restaurant with orders)
         if has_undelivered_order and orders:
@@ -703,6 +788,13 @@ class OpenAI(AIEngine):
                 has_undelivered, orders = await self._check_undelivered_order(caller_phone)
         except Exception as e:
             logging.warning("Could not check orders: %s", e)
+        
+        # Send menu via SMS when caller calls (for restaurant service)
+        if caller_phone:
+            functions = self._get_function_definitions()
+            has_track_order = any(f.get('name') == 'track_order' for f in functions)
+            if has_track_order:
+                asyncio.create_task(self._send_menu_sms(caller_phone))
 
         # Build instructions and welcome message from config
         customized_instructions = self._build_instructions_from_config(has_undelivered, orders)
@@ -711,6 +803,13 @@ class OpenAI(AIEngine):
         # Use welcome message from config or fallback to intro
         if not welcome_message:
             welcome_message = self.intro
+
+        # Include welcome message in instructions if provided
+        if welcome_message:
+            if customized_instructions:
+                customized_instructions = f"{customized_instructions}\n\nWhen the call starts, greet the user with: {welcome_message}"
+            else:
+                customized_instructions = f"When the call starts, greet the user with: {welcome_message}"
 
         # Build session with config-loaded functions and instructions
         self.session = {
@@ -728,21 +827,20 @@ class OpenAI(AIEngine):
             "max_response_output_tokens": self.cfg.get("max_tokens", "OPENAI_MAX_TOKENS", "inf"),
             "tools": self._get_function_definitions(),  # Load from config
             "tool_choice": "auto",
-            "instructions": customized_instructions  # Load from config
+            "instructions": customized_instructions  # Load from config with welcome message
         }
 
         # Send session update
         await self.ws.send(json.dumps({"type": "session.update", "session": self.session}))
         logging.info("FLOW start: OpenAI session.update sent with %d functions", len(self.session["tools"]))
 
-        # Send welcome message
+        # Trigger initial response to speak the welcome message
         if welcome_message:
-            intro_payload = {
-                "modalities": ["text", "audio"],
-                "instructions": "Please greet the user with the following: " + welcome_message
-            }
-            await self.ws.send(json.dumps({"type": "response.create", "response": intro_payload}))
-            logging.info("FLOW start: welcome message sent")
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+            logging.info("FLOW start: welcome message trigger sent")
 
         # Connect Soniox
         soniox_key_ok = bool(self.soniox_key and self.soniox_key != "SONIOX_API_KEY")
@@ -785,6 +883,14 @@ class OpenAI(AIEngine):
             t = msg["type"]
 
             if t == "response.audio.delta":
+                # Check if this is the first audio delta (start of speaking) after weather call
+                if not hasattr(self, '_weather_audio_started'):
+                    self._weather_audio_started = False
+                if not self._weather_audio_started and hasattr(self, '_last_weather_call_time'):
+                    time_since_weather = (time.time() - self._last_weather_call_time) * 1000
+                    logging.info(f"🔊 Weather TTS: OpenAI started speaking about weather at {datetime.now().strftime('%H:%M:%S.%f')[:-3]} | Time since weather API call: {time_since_weather:.2f}ms")
+                    self._weather_audio_started = True
+                
                 media = base64.b64decode(msg["delta"])
                 packets, leftovers = await self.run_in_thread(self.codec.parse, media, leftovers)
                 for packet in packets:
@@ -812,7 +918,18 @@ class OpenAI(AIEngine):
                     logging.info("FLOW TTS: response.create issued (fallback Whisper turn)")
 
             elif t == "response.audio_transcript.done":
-                logging.info("OpenAI said: %s", msg["transcript"])
+                transcript = msg.get("transcript", "")
+                logging.info("OpenAI said: %s", transcript)
+                
+                # Check if this is a weather-related response
+                if hasattr(self, '_last_weather_call_time') and any(word in transcript.lower() for word in ['آب و هوا', 'دما', 'درجه', 'رطوبت', 'باد', 'weather', 'temperature']):
+                    time_since_weather = (time.time() - self._last_weather_call_time) * 1000
+                    logging.info(f"💬 Weather TTS: OpenAI finished speaking about weather at {datetime.now().strftime('%H:%M:%S.%f')[:-3]} | Total time from API call to speech end: {time_since_weather:.2f}ms")
+                    # Reset flag
+                    if hasattr(self, '_weather_audio_started'):
+                        self._weather_audio_started = False
+                    if hasattr(self, '_last_weather_call_time'):
+                        delattr(self, '_last_weather_call_time')
 
             elif t == "response.function_call_arguments.done":
                 call_id = msg.get("call_id")
@@ -827,10 +944,42 @@ class OpenAI(AIEngine):
                 await self._handle_function_call(name, call_id, args)
 
             elif t == "error":
-                logging.error("OpenAI error: %s", msg)
+                error_msg = msg.get("error", {})
+                error_type = error_msg.get("type", "unknown")
+                error_message = error_msg.get("message", str(msg))
+                error_code = error_msg.get("code", "unknown")
+                logging.error("OpenAI error [%s/%s]: %s", error_type, error_code, error_message)
+                # Check for payment/credit errors
+                if error_code in ["insufficient_quota", "billing_not_active", "invalid_api_key"]:
+                    logging.error("⚠️ CRITICAL: OpenAI API issue - Code: %s, Message: %s", error_code, error_message)
 
+            elif t == "response.done":
+                # Check if response failed and log full error details
+                response_obj = msg.get("response", {})
+                status = response_obj.get("status", "unknown")
+                status_details = response_obj.get("status_details", {})
+                
+                if status == "failed":
+                    error_type = status_details.get("type", "unknown")
+                    error_message = status_details.get("message", "No error message")
+                    error_code = status_details.get("code", "unknown")
+                    logging.error("⚠️ OpenAI response FAILED - Type: %s, Code: %s, Message: %s", 
+                                error_type, error_code, error_message)
+                    logging.error("Full response.done event: %s", json.dumps(msg, ensure_ascii=False))
+                    
+                    # Check for specific error types
+                    if error_code in ["insufficient_quota", "billing_not_active", "invalid_api_key"]:
+                        logging.error("🚨 CRITICAL: OpenAI billing/credit issue detected!")
+                    elif "rate_limit" in error_message.lower() or error_code == "rate_limit_exceeded":
+                        logging.error("⚠️ Rate limit exceeded - wait before retrying")
+                else:
+                    logging.info("OpenAI response completed with status: %s", status)
+            
             else:
                 logging.debug("OpenAI event: %s", t)
+                # Log important events at INFO level
+                if t in ["response.created", "response.audio_transcript.done", "conversation.item.created"]:
+                    logging.info("OpenAI event: %s - %s", t, json.dumps(msg)[:200])
 
     async def _handle_function_call(self, name, call_id, args):
         """Handle function calls dynamically - supports both taxi and restaurant."""
@@ -888,6 +1037,22 @@ class OpenAI(AIEngine):
         # === Taxi service functions ===
         elif name == "get_origin_destination_userame":
             await self._handle_taxi_booking(call_id, args)
+        elif name == "get_weather":
+            # Only allow weather for taxi service
+            if self.did_config and self.did_config.get('service_id') == 'taxi_vip':
+                await self._handle_get_weather(call_id, args)
+            else:
+                logging.warning("FLOW tool: get_weather called but not a taxi service")
+                output = {"error": "این قابلیت فقط برای سرویس تاکسی در دسترس است."}
+                await self.ws.send(json.dumps({
+                    "type": "conversation.item.create",
+                    "item": {"type": "function_call_output", "call_id": call_id,
+                             "output": json.dumps(output, ensure_ascii=False)}
+                }))
+                await self.ws.send(json.dumps({
+                    "type": "response.create",
+                    "response": {"modalities": ["text", "audio"]}
+                }))
 
         # === Restaurant service functions ===
         elif name == "track_order":
@@ -995,6 +1160,42 @@ class OpenAI(AIEngine):
             "type": "response.create",
             "response": {"modalities": ["text", "audio"]}
         }))
+
+    async def _handle_get_weather(self, call_id, args):
+        """Handle get_weather function call for taxi service."""
+        city = args.get("city")
+        handler_start_time = time.time()
+        # Store start time for tracking when OpenAI starts speaking
+        self._last_weather_call_time = handler_start_time
+        self._weather_audio_started = False
+        
+        logging.info(f"🌤️  Weather Handler: Starting weather request for city: {city} at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
+        
+        def _get_weather():
+            return self._fetch_weather(city)
+        
+        result = await self.run_in_thread(_get_weather)
+        
+        # Log when function output is sent
+        output_send_time = time.time()
+        logging.info(f"📤 Weather Handler: Sending function output to OpenAI at {datetime.now().strftime('%H:%M:%S.%f')[:-3]} | Handler processing time: {(output_send_time - handler_start_time) * 1000:.2f}ms")
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(result, ensure_ascii=False)}
+        }))
+        
+        # Log when response.create is sent (triggers OpenAI to speak)
+        response_create_time = time.time()
+        logging.info(f"🎤 Weather Handler: Requesting OpenAI to generate response (response.create) at {datetime.now().strftime('%H:%M:%S.%f')[:-3]} | Time since handler start: {(response_create_time - handler_start_time) * 1000:.2f}ms")
+        
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+        
+        logging.info(f"⏱️  Weather Handler: Total handler time: {(time.time() - handler_start_time) * 1000:.2f}ms")
 
     # ---------------------- Restaurant service handlers ----------------------
     async def _handle_track_order(self, call_id, args):
@@ -1184,6 +1385,9 @@ class OpenAI(AIEngine):
                 self.recent_order_ids.add(order_id)
                 self._order_confirmed = True
                 
+                # Send SMS receipt to customer
+                asyncio.create_task(self._send_order_receipt_sms(order, normalized_phone))
+                
                 output = {
                     "success": True,
                     "message": f"سفارش شما با موفقیت ثبت شد. جمع کل: {order.get('total_price'):,} تومان",
@@ -1207,6 +1411,95 @@ class OpenAI(AIEngine):
             "type": "response.create",
             "response": {"modalities": ["text", "audio"]}
         }))
+    
+    async def _send_order_receipt_sms(self, order: dict, phone_number: str):
+        """Send order receipt via SMS"""
+        try:
+            # Format order receipt message
+            order_id = order.get('id')
+            total_price = order.get('total_price', 0)
+            status = order.get('status', 'pending')
+            status_display = dict([
+                ('pending', 'در انتظار تایید رستوران'),
+                ('confirmed', 'تایید توسط رستوران'),
+                ('preparing', 'در حال آماده سازی'),
+                ('on_delivery', 'تحویل داده شده به پیک'),
+                ('delivered', 'تحویل داده شده به مشتری'),
+                ('cancelled', 'لغو شده')
+            ]).get(status, status)
+            
+            # Format items
+            items = order.get('items', [])
+            items_text = []
+            for item in items:
+                item_name = item.get('menu_item_name') or (item.get('menu_item', {}).get('name') if isinstance(item.get('menu_item'), dict) else '') or ''
+                quantity = item.get('quantity', 1)
+                unit_price = item.get('unit_price', 0)
+                if item_name:
+                    items_text.append(f"{quantity}× {item_name} ({unit_price:,} تومان)")
+            
+            receipt = f"📋 فاکتور سفارش #{order_id}\n\n"
+            if items_text:
+                receipt += "موارد سفارش:\n" + "\n".join(items_text) + "\n\n"
+            receipt += f"💰 جمع کل: {total_price:,} تومان\n"
+            receipt += f"📊 وضعیت: {status_display}"
+            
+            # Send SMS
+            sms_service.send_sms(phone_number, receipt)
+            logging.info(f"📱 Order receipt SMS sent to {phone_number} for order #{order_id}")
+            
+        except Exception as e:
+            logging.error(f"❌ Failed to send order receipt SMS: {e}", exc_info=True)
+    
+    async def _send_menu_sms(self, phone_number: str):
+        """Send top menu items via SMS when caller calls"""
+        try:
+            if not phone_number:
+                logging.warning("Cannot send menu SMS: no phone number")
+                return
+            
+            # Normalize phone number
+            normalized_phone = normalize_phone_number(phone_number)
+            if not normalized_phone:
+                logging.warning(f"Cannot send menu SMS: invalid phone number format: {phone_number}")
+                return
+            
+            # Get top 10 menu items (5 special foods + 5 drinks)
+            menu_result = await self.api.get_top_menu_items(limit=10, include_drinks=True)
+            
+            if not menu_result.get("success") or not menu_result.get("items"):
+                logging.warning("Could not retrieve menu items for SMS")
+                return
+            
+            items = menu_result.get("items", [])
+            
+            # Format menu message
+            menu_text = "🍽️ منوی رستوران بزرگمهر\n\n"
+            menu_text += "پیشنهادات ویژه:\n"
+            
+            # Separate foods and drinks
+            foods = [item for item in items if item.get('category') != 'نوشیدنی']
+            drinks = [item for item in items if item.get('category') == 'نوشیدنی']
+            
+            # Add top foods (up to 5)
+            for i, item in enumerate(foods[:5], 1):
+                name = item.get('name', '')
+                price = item.get('final_price', 0)
+                menu_text += f"{i}. {name} - {price:,} تومان\n"
+            
+            if drinks:
+                menu_text += "\nنوشیدنی‌ها:\n"
+                for i, item in enumerate(drinks[:5], 1):
+                    name = item.get('name', '')
+                    price = item.get('final_price', 0)
+                    menu_text += f"{i}. {name} - {price:,} تومان\n"
+            
+            # Send SMS with normalized phone
+            sms_service.send_sms(normalized_phone, menu_text)
+            logging.info(f"📱 Menu SMS sent to {normalized_phone} (original: {phone_number})")
+            
+        except Exception as e:
+            logging.error(f"❌ Failed to send menu SMS: {e}", exc_info=True)
 
     # ---------------------- lifecycle helpers ----------------------
     def terminate_call(self):
@@ -1321,15 +1614,21 @@ class OpenAI(AIEngine):
                 if finals:
                     final_text = "".join(finals)
                     logging.info("STT (final): %s", final_text)
-                    self._soniox_accum.append(final_text)
-                    if self._soniox_flush_timer:
-                        self._soniox_flush_timer.cancel()
-                    if not has_nonfinal:
-                        self._soniox_flush_timer = asyncio.create_task(
-                            self._delayed_flush_soniox_segment()
-                        )
+                    # Filter out control tokens like <end>, <fin>, etc.
+                    if final_text and final_text not in ["<end>", "<fin>", "<start>"]:
+                        self._soniox_accum.append(final_text)
+                        if self._soniox_flush_timer:
+                            self._soniox_flush_timer.cancel()
+                        if not has_nonfinal:
+                            logging.info("FLOW STT: Scheduling delayed flush (no non-final tokens)")
+                            self._soniox_flush_timer = asyncio.create_task(
+                                self._delayed_flush_soniox_segment()
+                            )
+                    else:
+                        logging.debug("FLOW STT: Ignoring control token: %s", final_text)
 
                 if any(t.get("text") == "<fin>" for t in tokens):
+                    logging.info("FLOW STT: <fin> token received, flushing immediately")
                     if self._soniox_flush_timer:
                         self._soniox_flush_timer.cancel()
                         self._soniox_flush_timer = None
@@ -1346,11 +1645,17 @@ class OpenAI(AIEngine):
     async def _delayed_flush_soniox_segment(self):
         """Delayed flush for Soniox segments."""
         try:
-            await asyncio.sleep(self.soniox_silence_duration_ms / 1000.0)
+            delay = self.soniox_silence_duration_ms / 1000.0
+            logging.info("FLOW STT: Delayed flush scheduled, waiting %.2f seconds", delay)
+            await asyncio.sleep(delay)
             if self._soniox_flush_timer and not self._soniox_flush_timer.cancelled():
+                logging.info("FLOW STT: Delayed flush timer expired, flushing segment")
                 await self._flush_soniox_segment()
                 self._soniox_flush_timer = None
+            else:
+                logging.debug("FLOW STT: Delayed flush cancelled or already flushed")
         except asyncio.CancelledError:
+            logging.debug("FLOW STT: Delayed flush cancelled")
             pass
     
     def _correct_common_misrecognitions(self, text: str) -> str:
@@ -1396,22 +1701,36 @@ class OpenAI(AIEngine):
             return
         
         corrected_text = self._correct_common_misrecognitions(text)
-        logging.info("STT transcript: %s", corrected_text)
+        logging.info("FLOW STT: Final transcript: '%s' (length: %d)", corrected_text, len(corrected_text))
         await self._send_user_text_to_openai(corrected_text)
     
     async def _send_user_text_to_openai(self, text: str):
         """Send user text to OpenAI."""
+        # Clean the text - remove <end> marker if present
+        cleaned_text = text.replace("<end>", "").strip()
+        if not cleaned_text:
+            logging.warning("FLOW TTS: Empty transcript after cleaning, skipping")
+            return
+            
+        logging.info("FLOW TTS: Sending transcript to OpenAI: '%s'", cleaned_text)
         try:
-            await self.ws.send(json.dumps({
+            # Send user message
+            user_msg = {
                 "type": "conversation.item.create",
-                "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}
-            }))
-            await self.ws.send(json.dumps({
+                "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": cleaned_text}]}
+            }
+            await self.ws.send(json.dumps(user_msg))
+            logging.info("FLOW TTS: conversation.item.create sent for user message")
+            
+            # Trigger response
+            response_msg = {
                 "type": "response.create",
                 "response": {"modalities": ["text", "audio"]}
-            }))
+            }
+            await self.ws.send(json.dumps(response_msg))
+            logging.info("FLOW TTS: response.create sent - waiting for OpenAI response")
         except Exception as e:
-            logging.error("Error forwarding transcript: %s", e)
+            logging.error("FLOW TTS: Error forwarding transcript to OpenAI: %s", e, exc_info=True)
 
     # ---------------------- audio ingress ----------------------
     async def send(self, audio):

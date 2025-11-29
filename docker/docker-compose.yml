@@ -20,14 +20,20 @@ services:
       BACKEND_SERVER_URL: ${BACKEND_SERVER_URL:-http://localhost:8000}
       # Logging
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Event port - use 0 for random port to avoid conflicts
+      EVENT_PORT: ${EVENT_PORT:-0}
     env_file:
       - .env
     volumes:
       - ../opensip_stabel/engine/src:/app/src/
+    depends_on:
+      opensips:
+        condition: service_started
 
   opensips:
     container_name: ai-voice-connector-opensips
     image: opensips/opensips:latest
+    command: ["-f", "/etc/opensips/opensips.cfg", "-m", "512", "-M", "128"]
     volumes:
       - ../opensip_stabel/engine/cfg:/etc/opensips/
     network_mode: host

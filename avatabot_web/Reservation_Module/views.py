@@ -23,6 +23,7 @@ from Reservation_Module.serializers import (
     ReservationSerializer
 )
 from Reservation_Module.forms import TaxiSettingsForm
+from Reservation_Module.sms_service import send_sms
 
 
 @method_decorator(ensure_csrf_cookie, name='dispatch')
@@ -143,6 +144,7 @@ def update_order_status(request, order_id):
             status=status.HTTP_404_NOT_FOUND
         )
     
+    old_status = order.status
     new_status = request.data.get('status')
     
     valid_statuses = dict(Order.STATUS_CHOICES).keys()
@@ -152,8 +154,36 @@ def update_order_status(request, order_id):
             status=status.HTTP_400_BAD_REQUEST
         )
     
+    # Update order status
     order.status = new_status
     order.save()
+    
+    # Send SMS notification if status changed
+    if old_status != new_status and order.phone_number:
+        try:
+            status_display = dict(Order.STATUS_CHOICES).get(new_status, new_status)
+            old_status_display = dict(Order.STATUS_CHOICES).get(old_status, old_status)
+            
+            # Format order items for SMS
+            items_text = []
+            for item in order.items.all():
+                items_text.append(f"{item.quantity}× {item.menu_item.name}")
+            
+            message = f"📋 به‌روزرسانی سفارش #{order.id}\n\n"
+            if items_text:
+                message += "موارد سفارش:\n" + "\n".join(items_text[:5])  # Limit to 5 items
+                if len(items_text) > 5:
+                    message += f"\nو {len(items_text) - 5} مورد دیگر..."
+                message += "\n\n"
+            message += f"وضعیت سفارش شما از «{old_status_display}» به «{status_display}» تغییر کرد."
+            
+            # Send SMS asynchronously (don't block the response)
+            import threading
+            threading.Thread(target=send_sms, args=(order.phone_number, message), daemon=True).start()
+            logging.info(f"📱 Status change SMS queued for order #{order.id} to {order.phone_number}")
+        except Exception as e:
+            logging.error(f"❌ Failed to send status change SMS: {e}", exc_info=True)
+            # Don't fail the request if SMS fails
     
     serializer = OrderSerializer(order)
     return Response(serializer.data, status=status.HTTP_200_OK)

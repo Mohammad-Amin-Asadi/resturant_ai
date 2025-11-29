@@ -2,3 +2,14 @@ ubuntu/
 home.zip
 غذای ایرانی.ini
 docker/.env
+MULTI_TENANT_SETUP.md
+src/__pycache__/*
+*\.swp
+*\.ini
+.venv
+docker/.env
+roshanfekr/*
+test/*
+MULTI_TENANT_SETUP.md
+MULTI_TENANT_SETUP.md
+test/

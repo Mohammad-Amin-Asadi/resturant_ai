@@ -6,8 +6,8 @@ COPY . /app/
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-ENV EVENT_PORT=50060
-
-EXPOSE 50060
+# Use port 0 (random) to avoid port conflicts
+# The actual port will be assigned by the OS
+ENV EVENT_PORT=0
 CMD ["python3", "-u", "src/init_db.py"]
 CMD ["python3", "-u", "src/main.py"]

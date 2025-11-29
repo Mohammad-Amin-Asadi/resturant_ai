@@ -451,6 +451,69 @@ class API:
             logging.error(f"Error searching menu: {e}")
             return {"success": False, "message": str(e)}
     
+    async def get_top_menu_items(self, limit: int = 10, include_drinks: bool = True) -> dict:
+        """
+        Get top menu items (special items + popular foods/drinks)
+        
+        Args:
+            limit: Maximum number of items to return
+            include_drinks: Whether to include drinks in the result
+            
+        Returns:
+            dict: {"success": bool, "items": list}
+        """
+        try:
+            # Get special items first
+            special_params = {"special": "true", "is_available": "true"}
+            special_response = requests.get(self.menu_url, params=special_params, timeout=10)
+            special_response.raise_for_status()
+            special_items = special_response.json()
+            
+            # Get regular items (foods)
+            food_params = {"category": "غذای ایرانی"}
+            food_response = requests.get(self.menu_url, params=food_params, timeout=10)
+            food_response.raise_for_status()
+            food_items = food_response.json()
+            
+            # Get drinks if requested
+            drink_items = []
+            if include_drinks:
+                drink_params = {"category": "نوشیدنی"}
+                drink_response = requests.get(self.menu_url, params=drink_params, timeout=10)
+                drink_response.raise_for_status()
+                drink_items = drink_response.json()
+            
+            # Combine: special items first, then foods, then drinks
+            all_items = []
+            
+            # Add special items (up to limit/2)
+            special_limit = min(len(special_items), limit // 2)
+            all_items.extend(special_items[:special_limit])
+            
+            # Add foods (fill remaining slots)
+            remaining = limit - len(all_items)
+            if remaining > 0:
+                all_items.extend(food_items[:remaining])
+            
+            # Add drinks if we have space and include_drinks is True
+            if include_drinks:
+                remaining = limit - len(all_items)
+                if remaining > 0:
+                    all_items.extend(drink_items[:remaining])
+            
+            # Limit to requested number
+            all_items = all_items[:limit]
+            
+            logging.info(f"📋 Retrieved {len(all_items)} top menu items ({len(special_items)} special, {len(food_items)} foods, {len(drink_items)} drinks)")
+            return {"success": True, "items": all_items}
+            
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error getting top menu items: {e}")
+            return {"success": False, "message": str(e), "items": []}
+        except Exception as e:
+            logging.error(f"Unexpected error getting top menu items: {e}")
+            return {"success": False, "message": str(e), "items": []}
+    
     async def create_order(self, customer_name: str, phone_number: str, 
                            address: str, items: list, notes: str = None) -> dict:
         """Create a new restaurant order"""
