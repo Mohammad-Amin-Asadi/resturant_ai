@@ -1064,6 +1064,14 @@ class OpenAI(AIEngine):
         elif name == "create_order":
             await self._handle_create_order(call_id, args)
 
+        # === Personal Assistant service functions ===
+        elif name == "get_contact_info":
+            await self._handle_get_contact_info(call_id, args)
+        elif name == "get_resume_info":
+            await self._handle_get_resume_info(call_id, args)
+        elif name == "send_resume_pdf":
+            await self._handle_send_resume_pdf(call_id, args)
+
         else:
             logging.debug("FLOW tool: unhandled function name: %s", name)
 
@@ -1500,6 +1508,179 @@ class OpenAI(AIEngine):
             
         except Exception as e:
             logging.error(f"❌ Failed to send menu SMS: {e}", exc_info=True)
+
+    # ---------------------- Personal Assistant service handlers ----------------------
+    async def _handle_get_contact_info(self, call_id, args):
+        """Handle get_contact_info function call for Mahdi Meshkani's assistant."""
+        contact_type = args.get("contact_type", "direct")
+        topic = args.get("topic")
+        
+        logging.info(f"FLOW tool: Get contact info - type={contact_type}, topic={topic}")
+        
+        if contact_type == "direct":
+            # Only email for direct contact
+            output = {
+                "email": "Mahdi.meshkani@gmail.com",
+                "message": "ایمیل مهدی مشکانی: Mahdi.meshkani@gmail.com. اگه بخوای فقط دو خط درباره موضوعت بگی، شاید لازم باشه شماره تماس مستقیم‌شون رو هم بهت بدم."
+            }
+        else:  # professional
+            # Full contact info for professional inquiries
+            output = {
+                "email": "Mahdi.meshkani@gmail.com",
+                "phone": "+98 9900300824",
+                "message": "موضوعی که گفتی دقیقاً تو حیطه تخصصشه، و معمولاً مهدی این جور درخواست‌ها رو خودش بررسی می‌کنه. شماره تماس: +98 9900300824. ایمیل: Mahdi.meshkani@gmail.com. راحت‌ترین راه برات هر کدومه، از همون استفاده کن."
+            }
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
+    async def _handle_get_resume_info(self, call_id, args):
+        """Handle get_resume_info function call for Mahdi Meshkani's assistant."""
+        section = args.get("section", "full")
+        
+        logging.info(f"FLOW tool: Get resume info - section={section}")
+        
+        # Get resume data from DID config
+        custom_context = self.did_config.get('custom_context', {}) if self.did_config else {}
+        resume_data = custom_context.get('resume_summary', {})
+        mahdi_info = custom_context.get('mahdi_info', {})
+        
+        output = {}
+        
+        if section == "full" or not section:
+            # Full resume summary
+            output = {
+                "name": mahdi_info.get("name", "مهدی مشکانی"),
+                "title": mahdi_info.get("title", "کارآفرین خلاق و مدیر هنری"),
+                "experience": resume_data.get("experience", ""),
+                "achievements": resume_data.get("achievements", []),
+                "education": resume_data.get("education", []),
+                "memberships": resume_data.get("memberships", []),
+                "skills": resume_data.get("skills", []),
+                "message": "بذار یه تصویر واقعی از مهدی بهت بدم—نه فقط عنوان شغلی، بلکه مسیری که خودش با دست‌های خودش ساخته..."
+            }
+        elif section == "experience":
+            output = {
+                "section": "experience",
+                "content": resume_data.get("experience", ""),
+                "message": "مهدی بیش از ۲۰ سال تجربه داره از طراحی گرافیک تا مدیریت نشر، از تبلیغات تا سلامت روان دیجیتال."
+            }
+        elif section == "education":
+            output = {
+                "section": "education",
+                "content": resume_data.get("education", []),
+                "message": "تحصیلات مهدی شامل DBA مدیریت کسب‌وکار، کارشناسی ارشد روانشناسی، و کارشناسی مدیریت تبلیغات تجاری است."
+            }
+        elif section == "achievements":
+            output = {
+                "section": "achievements",
+                "content": resume_data.get("achievements", []),
+                "message": "برخی از دستاوردهای مهدی شامل خلق اولین کتاب رنگ‌آمیزی بزرگسالان در ایران و راه‌اندازی اولین مجله تبلیغاتی با واقعیت افزوده است."
+            }
+        elif section == "skills":
+            output = {
+                "section": "skills",
+                "content": resume_data.get("skills", []),
+                "message": "مهارت‌های مهدی شامل پلتفرمهای طراحی گرافیک، برندینگ، بازاریابی دیجیتال، و زبان انگلیسی حرفه‌ای است."
+            }
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
+    async def _handle_send_resume_pdf(self, call_id, args):
+        """Handle send_resume_pdf function call - automatically sends resume PDF link via SMS to caller's number."""
+        # Always use caller's phone number - no need to ask
+        phone_number = self.call.from_number
+        
+        logging.info(f"FLOW tool: Send resume PDF - automatically sending to caller phone: {phone_number}")
+        
+        if not phone_number:
+            output = {
+                "success": False,
+                "error": "شماره تماس در دسترس نیست. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
+            }
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+            return
+        
+        # Normalize phone number
+        normalized_phone = normalize_phone_number(phone_number)
+        
+        if not normalized_phone:
+            output = {
+                "success": False,
+                "error": "شماره تماس معتبر نیست. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
+            }
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+            return
+        
+        # Send resume PDF link via SMS
+        resume_link = "https://mahdi-meshkani.com/resume.pdf"  # Placeholder - replace with actual link
+        sms_message = f"رزومه کامل مهدی مِشکانی در وبسایت mahdi-meshkani موجود است یا می‌تونید از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
+        
+        def _send_sms():
+            return sms_service.send_sms(normalized_phone, sms_message)
+        
+        try:
+            sms_result = await self.run_in_thread(_send_sms)
+            if sms_result:
+                output = {
+                    "success": True,
+                    "method": "sms",
+                    "phone": normalized_phone,
+                    "message": f"لینک دانلود رزومه به شماره شما ارسال شد."
+                }
+                logging.info(f"📱 Resume PDF link sent via SMS to {normalized_phone}")
+            else:
+                output = {
+                    "success": False,
+                    "error": "متأسفانه ارسال پیامک با مشکل مواجه شد. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
+                }
+        except Exception as e:
+            logging.error(f"❌ Failed to send resume PDF SMS: {e}", exc_info=True)
+            output = {
+                "success": False,
+                "error": "متأسفانه ارسال پیامک با مشکل مواجه شد. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
+            }
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
 
     # ---------------------- lifecycle helpers ----------------------
     def terminate_call(self):
