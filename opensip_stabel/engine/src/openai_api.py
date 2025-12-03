@@ -1064,6 +1064,10 @@ class OpenAI(AIEngine):
         elif name == "create_order":
             await self._handle_create_order(call_id, args)
 
+        # === Direct FAQ service functions ===
+        elif name == "answer_faq":
+            await self._handle_answer_faq(call_id, args)
+
         # === Personal Assistant service functions ===
         elif name == "get_contact_info":
             await self._handle_get_contact_info(call_id, args)
@@ -1250,6 +1254,88 @@ class OpenAI(AIEngine):
             "type": "conversation.item.create",
             "item": {"type": "function_call_output", "call_id": call_id,
                      "output": json.dumps(output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
+    # ---------------------- Direct FAQ handlers ----------------------
+    async def _handle_answer_faq(self, call_id, args):
+        """Handle answer_faq function call for Direct FAQ service."""
+        user_question = (args.get("user_question") or "").strip()
+        logging.info("FLOW tool: answer_faq - user_question=%s", user_question)
+
+        # Load FAQ entries from DID config
+        faq_entries = []
+        if self.did_config:
+            custom_context = self.did_config.get("custom_context", {})
+            faq_entries = custom_context.get("faq_entries", []) or []
+
+        not_found_answer = (
+            "برای این سوال، پاسخ دقیقی در فهرست سؤالات متداول من ثبت نشده است. "
+            "لطفاً سوال را کمی تغییر دهید یا سوال دیگری بپرسید."
+        )
+
+        best_answer = not_found_answer
+        best_question = None
+        best_score = 0.0
+
+        def _normalize(text: str):
+            if not isinstance(text, str):
+                return []
+            # Convert Persian digits to ASCII, remove punctuation, split on whitespace
+            t = self._to_ascii_digits(text)
+            t = t.replace("؟", " ").replace("?", " ")
+            t = re.sub(r"[^\w\s\u0600-\u06FF]", " ", t)
+            tokens = [tok for tok in t.split() if tok]
+            return tokens
+
+        if user_question and faq_entries:
+            q_tokens = set(_normalize(user_question))
+            if q_tokens:
+                for entry in faq_entries:
+                    fq = entry.get("question") or ""
+                    fa = entry.get("answer") or ""
+                    if not fq or not fa:
+                        continue
+                    f_tokens = set(_normalize(fq))
+                    if not f_tokens:
+                        continue
+                    inter = len(q_tokens & f_tokens)
+                    union = len(q_tokens | f_tokens) or 1
+                    jaccard = inter / union
+
+                    # Small bonus if one text is substring of the other
+                    bonus = 0.0
+                    if fq in user_question or user_question in fq:
+                        bonus = 0.15
+                    score = jaccard + bonus
+
+                    if score > best_score:
+                        best_score = score
+                        best_answer = fa
+                        best_question = fq
+
+        # Require a minimum similarity threshold
+        threshold = 0.25
+        if best_score < threshold:
+            best_answer = not_found_answer
+            best_question = None
+
+        output = {
+            "answer": best_answer,
+            "matched_question": best_question,
+            "similarity_score": best_score,
+        }
+
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": json.dumps(output, ensure_ascii=False)
+            }
         }))
         await self.ws.send(json.dumps({
             "type": "response.create",
