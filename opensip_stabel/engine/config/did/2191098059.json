@@ -1,0 +1,90 @@
+{
+    "service_name": "تاکسی وی آی پی",
+    "service_id": "taxi_vip",
+    "description": "Configuration for Taxi VIP Service (DID: 5191096575)",
+    
+    "backend_url": "http://localhost:8001",
+    
+    "openai": {
+      "model": "gpt-4o-realtime-preview-2024-10-01",
+      "voice": "alloy",
+      "temperature": 0.8,
+      "welcome_message": "درود بر شما، با تاکسی وی آی پی تماس گرفته اید، لطفا جهت رزرو تاکسی نام خود را بفرمایید.",
+      "intro": "درود بر شما، با تاکسی وی آی پی تماس گرفته اید، لطفا جهت رزرو تاکسی نام خود را بفرمایید."
+    },
+    
+    "soniox": {
+      "enabled": true,
+      "model": "stt-rt-preview",
+      "language_hints": ["fa"],
+      "enable_speaker_diarization": true,
+      "enable_language_identification": true,
+      "enable_endpoint_detection": true,
+      "upsample_audio": true,
+      "silence_duration_ms": 500
+    },
+    
+    "instructions_base": "تو یک اپراتور تاکسی به نام تاکسی وی آی پی هستی و همیشه مودب و محترمانه و حرفه‌ای. از کاربر می‌خواهی فقط نام خودش را بگوید؛ بعد از دریافت نام، فقط مبدا را می‌پرسی، سپس فقط مقصد را. شماره تلفن خودکار است، نپرسید. تماس را فقط با صراحت کاربر قطع کنید (خداحافظ، بای، قطع کن). سکوت به معنای پایان نیست.",
+    
+    "scenarios": {
+      "new_customer": {
+        "welcome_templates": {
+          "with_customer_name": "درود بر شما {customer_name} عزیز، با {service_name} تماس گرفته‌اید",
+          "without_customer_name": " درود بر شما، با {service_name} تماس گرفته‌اید",
+          "new_customer_question": " لطفا جهت رزرو تاکسی نام خود را بفرمایید."
+        }
+      }
+    },
+    
+    "custom_context": {
+      "location_terms": [
+        "تهران", "میدان", "خیابان", "پلاک", "کوچه", "بلوار", "آزادی", "ولیعصر",
+        "انقلاب", "ولی‌عصر", "جمهوری", "فاطمی", "شریعتی", "نیاوران", "ونک"
+      ]
+    },
+    
+    "functions": [
+      {
+        "type": "function",
+        "name": "terminate_call",
+        "description": "ONLY call this function when the USER explicitly says they want to end the call. Examples: 'خداحافظ', 'بای', 'تماس رو قطع کن', 'تماس رو پایان بده'. DO NOT call this if: user is silent, user says '.', user pauses, or you just finished talking. ONLY call when user EXPLICITLY requests to end the call. Always say a friendly goodbye first, then call this function.",
+        "parameters": {"type": "object", "properties": {}, "required": []}
+      },
+      {
+        "type": "function",
+        "name": "transfer_call",
+        "description": "call the function if a request was received to transfer a call with an operator, a person",
+        "parameters": {"type": "object", "properties": {}, "required": []}
+      },
+      {
+        "type": "function",
+        "name": "get_origin_destination_userame",
+        "description": "Extract origin, destination, and user name from the conversation and get sure to save it in database. even if one of these inputs were available execute the function and save it in database.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "origin": {"type": "string", "description": "The starting point of the trip."},
+            "destination": {"type": "string", "description": "The endpoint of the trip."},
+            "user_name": {"type": "string", "description": "The name of the user."}
+          },
+          "required": ["origin", "destination", "user_name"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "get_weather",
+        "description": "Get current weather information for a city. Use this when the user asks about weather conditions.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {"type": "string", "description": "The name of the city to get weather for (e.g., 'مشهد', 'تهران', 'اصفهان')."}
+          },
+          "required": ["city"],
+          "additionalProperties": false
+        }
+      }
+    ]
+  }
+  
+  
