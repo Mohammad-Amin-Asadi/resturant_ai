@@ -1075,6 +1075,8 @@ class OpenAI(AIEngine):
             await self._handle_get_resume_info(call_id, args)
         elif name == "send_resume_pdf":
             await self._handle_send_resume_pdf(call_id, args)
+        elif name == "send_website_info":
+            await self._handle_send_website_info(call_id, args)
 
         else:
             logging.debug("FLOW tool: unhandled function name: %s", name)
@@ -1929,6 +1931,94 @@ class OpenAI(AIEngine):
                 }
         except Exception as e:
             logging.error(f"❌ Failed to send resume PDF SMS: {e}", exc_info=True)
+            output = {
+                "success": False,
+                "error": "متأسفانه ارسال پیامک با مشکل مواجه شد. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
+            }
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
+    async def _handle_send_website_info(self, call_id, args):
+        """Handle send_website_info function call - automatically sends website link via SMS to caller's number."""
+        # Always use caller's phone number - no need to ask
+        phone_number = self.call.from_number
+        
+        logging.info(f"FLOW tool: Send website info - automatically sending to caller phone: {phone_number}")
+        
+        if not phone_number:
+            output = {
+                "success": False,
+                "error": "شماره تماس در دسترس نیست. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
+            }
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+            return
+        
+        # Normalize phone number
+        normalized_phone = normalize_phone_number(phone_number)
+        
+        if not normalized_phone:
+            output = {
+                "success": False,
+                "error": "شماره تماس معتبر نیست. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
+            }
+            await self.ws.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": call_id,
+                         "output": json.dumps(output, ensure_ascii=False)}
+            }))
+            await self.ws.send(json.dumps({
+                "type": "response.create",
+                "response": {"modalities": ["text", "audio"]}
+            }))
+            return
+        
+        # Get website from config
+        website = "www.meshkani.pro"
+        if self.did_config:
+            custom_context = self.did_config.get('custom_context', {})
+            mahdi_info = custom_context.get('mahdi_info', {})
+            website = mahdi_info.get('website', 'www.meshkani.pro')
+        
+        # Send website link via SMS
+        sms_message = f"🌐 اطلاعات و نمونه‌کارهای مهدی مشکانی:\n{website}\n\nبرای تماس مستقیم:\n📧 Mahdi.meshkani@gmail.com"
+        
+        def _send_sms():
+            return sms_service.send_sms(normalized_phone, sms_message)
+        
+        try:
+            sms_result = await self.run_in_thread(_send_sms)
+            if sms_result:
+                output = {
+                    "success": True,
+                    "method": "sms",
+                    "phone": normalized_phone,
+                    "website": website,
+                    "message": f"لینک سایت به شماره شما ارسال شد."
+                }
+                logging.info(f"📱 Website info sent via SMS to {normalized_phone}")
+            else:
+                output = {
+                    "success": False,
+                    "error": "متأسفانه ارسال پیامک با مشکل مواجه شد. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
+                }
+        except Exception as e:
+            logging.error(f"❌ Failed to send website info SMS: {e}", exc_info=True)
             output = {
                 "success": False,
                 "error": "متأسفانه ارسال پیامک با مشکل مواجه شد. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
