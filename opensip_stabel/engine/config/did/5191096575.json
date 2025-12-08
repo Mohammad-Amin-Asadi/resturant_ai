@@ -6,7 +6,7 @@
   "backend_url": "http://localhost:8001",
   
   "openai": {
-    "model": "gpt-4o-realtime-preview-2024-10-01",
+    "model": "gpt-realtime-2025-08-28",
     "voice": "alloy",
     "temperature": 0.8,
     "welcome_message": "درود بر شما، با تاکسی وی آی پی تماس گرفته اید، لطفا جهت رزرو تاکسی نام خود را بفرمایید.",

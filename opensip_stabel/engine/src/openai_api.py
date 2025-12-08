@@ -1595,9 +1595,186 @@ class OpenAI(AIEngine):
         except Exception as e:
             logging.error(f"❌ Failed to send menu SMS: {e}", exc_info=True)
 
+    # ---------------------- Direct FAQ helpers & handlers ----------------------
+    def _normalize_faq_text(self, text: str):
+        """Simple normalizer for Persian text used as a fallback matcher."""
+        if not isinstance(text, str):
+            return []
+        t = self._to_ascii_digits(text)
+        t = t.replace("؟", " ").replace("?", " ")
+        t = re.sub(r"[^\w\s\u0600-\u06FF]", " ", t)
+        tokens = [tok for tok in t.split() if tok]
+        return tokens
+
+    def _match_faq_locally(self, user_question, faq_entries, not_found_answer):
+        """Fallback Jaccard-based matcher (used when OpenAI HTTP call fails)."""
+        best_answer = not_found_answer
+        best_question = None
+        best_score = 0.0
+
+        if not user_question or not faq_entries:
+            return best_answer, best_question, best_score
+
+        q_tokens = set(self._normalize_faq_text(user_question))
+        if not q_tokens:
+            return best_answer, best_question, best_score
+
+        for entry in faq_entries:
+            fq = entry.get("question") or ""
+            fa = entry.get("answer") or ""
+            if not fq or not fa:
+                continue
+            f_tokens = set(self._normalize_faq_text(fq))
+            if not f_tokens:
+                continue
+            inter = len(q_tokens & f_tokens)
+            union = len(q_tokens | f_tokens) or 1
+            jaccard = inter / union
+
+            bonus = 0.0
+            if fq in user_question or user_question in fq:
+                bonus = 0.15
+            score = jaccard + bonus
+
+            if score > best_score:
+                best_score = score
+                best_answer = fa
+                best_question = fq
+
+        return best_answer, best_question, best_score
+
+    def _match_faq_with_openai(self, user_question, faq_entries, not_found_answer):
+        """
+        Use OpenAI Chat Completion API to semantically match user_question
+        with the closest FAQ question. Returns (answer, matched_question, score).
+        """
+        try:
+            if not user_question or not faq_entries:
+                return not_found_answer, None, 0.0
+
+            # Prepare numbered questions
+            questions_text = []
+            for idx, entry in enumerate(faq_entries):
+                q = (entry.get("question") or "").strip()
+                if not q:
+                    continue
+                questions_text.append(f"{idx}: {q}")
+
+            if not questions_text:
+                return not_found_answer, None, 0.0
+
+            prompt_user = (
+                "سوال کاربر:\n"
+                f"{user_question}\n\n"
+                "لیست سوالات متداول (FAQ):\n"
+                + "\n".join(questions_text)
+                + "\n\n"
+                "کار تو این است که فقط تشخیص بدهی کدام سوال در این لیست از نظر معنا "
+                "بیشترین شباهت را با سوال کاربر دارد.\n"
+                "اگر هیچکدام از سوال‌ها مناسب نبود، عدد -1 را برگردان.\n\n"
+                "خروجی نهایی تو باید فقط و فقط یک عدد صحیح باشد:\n"
+                "- اگر یک سوال مناسب پیدا کردی: شماره آن سوال (ایندکس) به صورت عدد صحیح ۰-بنیان.\n"
+                "- اگر سوال مناسبی پیدا نکردی: عدد -1.\n"
+                "هیچ متن دیگری غیر از همین عدد ننویس."
+            )
+
+            api_key = self.key or os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                logging.error("FAQ matcher: OPENAI_API_KEY not set, falling back to local matcher")
+                return self._match_faq_locally(user_question, faq_entries, not_found_answer)
+
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a semantic FAQ matcher. You only answer with a single integer index."
+                    },
+                    {"role": "user", "content": prompt_user},
+                ],
+                "temperature": 0.0,
+            }
+
+            resp = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"].strip()
+            logging.info("FAQ matcher (OpenAI) raw content: %s", content)
+
+            # Extract integer index
+            m = re.search(r"-?\d+", content)
+            if not m:
+                logging.warning("FAQ matcher: no integer index in response, falling back to local")
+                return self._match_faq_locally(user_question, faq_entries, not_found_answer)
+
+            idx = int(m.group(0))
+            if idx < 0 or idx >= len(faq_entries):
+                logging.info("FAQ matcher: index %s out of range, treating as no match", idx)
+                return not_found_answer, None, 0.0
+
+            matched_entry = faq_entries[idx]
+            answer = matched_entry.get("answer") or not_found_answer
+            question = matched_entry.get("question") or None
+
+            # We don't have a real numeric similarity from the model; set a dummy high score
+            return answer, question, 0.9
+
+        except Exception as e:
+            logging.error("FAQ matcher (OpenAI) error: %s", e, exc_info=True)
+            return self._match_faq_locally(user_question, faq_entries, not_found_answer)
+
+    async def _handle_answer_faq(self, call_id, args):
+        """Handle answer_faq function call for Direct FAQ service."""
+        user_question = (args.get("user_question") or "").strip()
+        logging.info("FLOW tool: answer_faq - user_question=%s", user_question)
+
+        # Load FAQ entries from DID config
+        faq_entries = []
+        if self.did_config:
+            custom_context = self.did_config.get("custom_context", {})
+            faq_entries = custom_context.get("faq_entries", []) or []
+
+        not_found_answer = (
+            "برای این سوال، پاسخ دقیقی در فهرست سؤالات متداول من ثبت نشده است. "
+            "لطفاً سوال را کمی تغییر دهید یا سوال دیگری بپرسید."
+        )
+
+        # First try semantic matching via OpenAI; fall back to local if needed
+        best_answer, best_question, best_score = self._match_faq_with_openai(
+            user_question, faq_entries, not_found_answer
+        )
+
+        output = {
+            "answer": best_answer,
+            "matched_question": best_question,
+            "similarity_score": best_score,
+        }
+
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": json.dumps(output, ensure_ascii=False)
+            }
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
     # ---------------------- Personal Assistant service handlers ----------------------
     async def _handle_get_contact_info(self, call_id, args):
-        """Handle get_contact_info function call for Mahdi Meshkani's assistant."""
+        """Handle get_contact_info function call for Mahdi Meshkani's assistant. IMPORTANT: Phone number is NEVER provided - only email."""
         contact_type = args.get("contact_type", "direct")
         topic = args.get("topic")
         
@@ -1607,14 +1784,13 @@ class OpenAI(AIEngine):
             # Only email for direct contact
             output = {
                 "email": "Mahdi.meshkani@gmail.com",
-                "message": "ایمیل مهدی مشکانی: Mahdi.meshkani@gmail.com. اگه بخوای فقط دو خط درباره موضوعت بگی، شاید لازم باشه شماره تماس مستقیم‌شون رو هم بهت بدم."
+                "message": "حتماً. بهترین مسیر ارتباط مستقیم با مهدی ایمیلشه: 📧 Mahdi.meshkani@gmail.com اگه یکی‌دو خط بگی موضوعت چیه، کمک می‌کنه مکالمه‌تون سریع‌تر و دقیق‌تر پیش بره."
             }
         else:  # professional
-            # Full contact info for professional inquiries
+            # Professional inquiries - still only email (phone is NEVER provided)
             output = {
                 "email": "Mahdi.meshkani@gmail.com",
-                "phone": "+98 9900300824",
-                "message": "موضوعی که گفتی دقیقاً تو حیطه تخصصشه، و معمولاً مهدی این جور درخواست‌ها رو خودش بررسی می‌کنه. شماره تماس: +98 9900300824. ایمیل: Mahdi.meshkani@gmail.com. راحت‌ترین راه برات هر کدومه، از همون استفاده کن."
+                "message": "این موضوع دقیقاً در حوزه کاریشه. می‌تونی مستقیم براش بنویسی: 📧 Mahdi.meshkani@gmail.com ایمیلات رو با دقت بررسی می‌کنه."
             }
         
         await self.ws.send(json.dumps({
