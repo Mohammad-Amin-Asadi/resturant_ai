@@ -24,6 +24,7 @@ Module that provides helper functions for AI
 """
 
 import re
+import logging
 from sipmessage import Address
 from deepgram_api import Deepgram
 from openai_api import OpenAI
@@ -79,6 +80,88 @@ def get_user(params):
 
     to = get_to(params)
     return to.uri.user.lower() if to.uri else None
+
+
+def get_original_did_from_headers(params):
+    """
+    Extract original called number (DID) from SIP headers.
+    Checks History-Info, Diversion, and P-Asserted-Identity headers.
+    This is useful when IVR routes the call and changes the Request-URI.
+    
+    Args:
+        params: SIP parameters dictionary
+        
+    Returns:
+        Original DID number as string, or None if not found
+    """
+    if 'headers' not in params:
+        logging.debug("No headers in params for original DID extraction")
+        return None
+    
+    headers = params['headers']
+    
+    # Log available headers for debugging (only if we don't find original DID)
+    available_headers = []
+    for line in headers.splitlines():
+        if ':' in line:
+            header_name = line.split(':', 1)[0].strip()
+            if header_name.lower() in ['history-info', 'diversion', 'p-asserted-identity', 'p-called-party-id']:
+                available_headers.append(header_name)
+    
+    # Try History-Info header (most common for call forwarding/IVR)
+    # Format: History-Info: <sip:511882@domain>;index=1, <sip:1@domain>;index=2
+    history_info = get_header(params, "History-Info")
+    if history_info:
+        logging.debug("Found History-Info header: %s", history_info)
+        # Get the first entry (original called number)
+        # History-Info entries are comma-separated, first one is usually the original
+        entries = history_info.split(',')
+        if entries:
+            first_entry = entries[0].strip()
+            # Extract number from <sip:number@domain>
+            match = re.search(r'<sip:([^@>]+)@', first_entry)
+            if match:
+                original_did = match.group(1)
+                logging.info("📞 Original DID from History-Info: %s", original_did)
+                return original_did
+    
+    # Try Diversion header
+    # Format: Diversion: <sip:511882@domain>;reason=unconditional
+    diversion = get_header(params, "Diversion")
+    if diversion:
+        logging.debug("Found Diversion header: %s", diversion)
+        match = re.search(r'<sip:([^@>]+)@', diversion)
+        if match:
+            original_did = match.group(1)
+            logging.info("📞 Original DID from Diversion: %s", original_did)
+            return original_did
+    
+    # Try P-Called-Party-ID header (sometimes used by PBX systems)
+    p_called = get_header(params, "P-Called-Party-ID")
+    if p_called:
+        logging.debug("Found P-Called-Party-ID header: %s", p_called)
+        match = re.search(r'<sip:([^@>]+)@', p_called)
+        if match:
+            original_did = match.group(1)
+            logging.info("📞 Original DID from P-Called-Party-ID: %s", original_did)
+            return original_did
+    
+    # Try P-Asserted-Identity (less common for DID, but worth checking)
+    p_asserted = get_header(params, "P-Asserted-Identity")
+    if p_asserted:
+        logging.debug("Found P-Asserted-Identity header: %s", p_asserted)
+        match = re.search(r'<sip:([^@>]+)@', p_asserted)
+        if match:
+            original_did = match.group(1)
+            logging.info("📞 Original DID from P-Asserted-Identity: %s", original_did)
+            return original_did
+    
+    if available_headers:
+        logging.debug("Checked headers for original DID: %s (none contained original DID)", ", ".join(available_headers))
+    else:
+        logging.debug("No relevant headers found for original DID extraction")
+    
+    return None
 
 
 def get_request_uri(params):

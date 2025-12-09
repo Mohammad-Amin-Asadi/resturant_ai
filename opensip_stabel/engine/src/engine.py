@@ -29,7 +29,7 @@ import requests
 
 from opensips.mi import OpenSIPSMI, OpenSIPSMIException
 from opensips.event import OpenSIPSEventHandler, OpenSIPSEventException
-from iranian_phone_validator import validate_caller_number
+from iranian_phone_validator import validate_caller_number, extract_config_number_from_from_header, clean_from_header_after_config_extraction
 from phone_normalizer import normalize_phone_number
 from aiortc.sdp import SessionDescription
 
@@ -47,6 +47,7 @@ WHITELISTED_IPS = [
     "127.0.0.1",           # Localhost
     "185.58.241.63",
     "185.110.188.112",       # Server خودمون
+    "188.0.240.162"
 ]
 
 def is_ip_whitelisted(sdp_str):
@@ -158,13 +159,56 @@ def handle_call(call, key, method, params):
     """ Handles a SIP call """
 
     if method == 'INVITE':
+        # ═══════════════════════════════════════════════════════════
+        # لاگ کامل اطلاعات خام درخواست SIP
+        # ═══════════════════════════════════════════════════════════
+        logging.info("\n" + "=" * 100)
+        logging.info("📞 COMPLETE SIP REQUEST DATA (RAW)")
+        logging.info("=" * 100)
+        logging.info("Call ID (B2B Key): %s", key)
+        logging.info("Method: %s", method)
+        logging.info("Full params dictionary:")
+        for param_key, param_value in params.items():
+            if param_key == 'body' and param_value:
+                # برای body (SDP) فقط طول را نشان بده
+                sdp_lines = param_value.split('\n') if isinstance(param_value, str) else []
+                logging.info("  %s: [SDP Body - %d lines, %d chars]", param_key, len(sdp_lines), len(str(param_value)))
+            else:
+                logging.info("  %s: %s", param_key, param_value)
+        
+        # استخراج و نمایش تمام header های مهم
+        logging.info("\n📋 SIP Headers:")
+        headers_to_check = [
+            "From", "To", "Call-ID", "CSeq", "Contact", "Via", 
+            "User-Agent", "Allow", "Supported", "Content-Type",
+            "Content-Length", "Route", "Record-Route", "Max-Forwards"
+        ]
+        for header_name in headers_to_check:
+            header_value = utils.get_header(params, header_name)
+            if header_value:
+                logging.info("  %s: %s", header_name, header_value)
+        
+        # Request-URI
+        request_uri = utils.get_request_uri(params)
+        if request_uri:
+            logging.info("  Request-URI: %s", request_uri)
+        
+        # SDP Body (complete)
+        if 'body' in params and params['body']:
+            logging.info("\n📄 SDP Body (Complete):")
+            logging.info("-" * 100)
+            sdp_str = params['body']
+            for i, line in enumerate(sdp_str.split('\n'), 1):
+                logging.info("  %3d: %s", i, line)
+            logging.info("-" * 100)
+        
+        logging.info("=" * 100 + "\n")
+        
         if 'body' not in params:
             mi_reply(key, method, 415, 'Unsupported Media Type')
             return
 
         sdp_str = params['body']
-        # Log the SDP for debugging
-        logging.info("SDP received: %s", sdp_str)
         
         # ═══════════════════════════════════════════════════════════
         # بررسی IP Whitelist (قبل از هر فیلتری)
@@ -180,6 +224,22 @@ def handle_call(call, key, method, params):
 
         if call:
             # handle in-dialog re-INVITE
+            # Check if DID changed (IVR routing) - preserve original DID
+            request_uri = utils.get_request_uri(params)
+            new_did_number = None
+            if request_uri and request_uri.uri:
+                new_did_number = request_uri.uri.user if request_uri.uri.user else None
+                if not new_did_number and request_uri.uri.host:
+                    new_did_number = request_uri.uri.host.split('@')[0] if '@' in request_uri.uri.host else request_uri.uri.host
+            
+            # If DID changed and we don't have an original DID stored, store the current one as original
+            if new_did_number and new_did_number != call.did_number:
+                if not hasattr(call, 'original_did_number') or not call.original_did_number:
+                    call.original_did_number = call.did_number
+                call.did_number = new_did_number
+                logging.info("🔄 DID changed from %s to %s (IVR routing detected)", 
+                           call.original_did_number, new_did_number)
+            
             direction = sdp.media[0].direction
             if not direction or direction == "sendrecv":
                 call.resume()
@@ -199,11 +259,20 @@ def handle_call(call, key, method, params):
                 return
             
             # ═══════════════════════════════════════════════════════════
+            # استخراج From header (یک بار برای استفاده در همه جا)
+            # ═══════════════════════════════════════════════════════════
+            from_header = utils.get_header(params, "From")
+            
+            # ═══════════════════════════════════════════════════════════
+            # اولویت 1: چک کردن الگوی "15923[شماره]-None" در From header
+            # ═══════════════════════════════════════════════════════════
+            config_number_from_from = extract_config_number_from_from_header(from_header)
+            
+            # ═══════════════════════════════════════════════════════════
             # Validation شماره موبایل (فقط برای non-whitelisted IPs)
             # ═══════════════════════════════════════════════════════════
             caller_number = None
             if not is_whitelisted:
-                from_header = utils.get_header(params, "From")
                 is_valid_phone, caller_number = validate_caller_number(from_header)
 
                 if not is_valid_phone:
@@ -221,7 +290,6 @@ def handle_call(call, key, method, params):
                 logging.info(f"✅ Valid Iranian mobile number: {caller_number}")
             else:
                 # For whitelisted IPs, still try to extract phone number if available
-                from_header = utils.get_header(params, "From")
                 is_valid_phone, caller_number = validate_caller_number(from_header)
                 if is_valid_phone:
                     caller_number = normalize_phone_number(caller_number)
@@ -229,7 +297,7 @@ def handle_call(call, key, method, params):
             
             flavor, to, cfg = parse_params(params)
             
-            # Extract Request-URI (DID number - the actual number dialed)
+            # Extract Request-URI (DID number - current number after IVR routing)
             request_uri = utils.get_request_uri(params)
             did_number = None
             if request_uri and request_uri.uri:
@@ -238,12 +306,35 @@ def handle_call(call, key, method, params):
                     # Sometimes the number is in the host part
                     did_number = request_uri.uri.host.split('@')[0] if '@' in request_uri.uri.host else request_uri.uri.host
             
+            original_did_number = None
+            if config_number_from_from:
+                # اگر الگو را پیدا کردیم، از این شماره برای لود کانفیگ استفاده می‌کنیم
+                original_did_number = config_number_from_from
+                logging.info("🎯 Config number extracted from From header pattern: %s (current DID: %s)", 
+                           config_number_from_from, did_number)
+                
+                # پاک کردن بخش "15923[شماره]-None" از From header
+                from_header = clean_from_header_after_config_extraction(from_header)
+                # استخراج مجدد caller_number از From header پاک شده
+                is_valid_phone, caller_number = validate_caller_number(from_header)
+                if is_valid_phone:
+                    caller_number = normalize_phone_number(caller_number)
+                    logging.info(f"📞 Caller number after cleaning From header: {caller_number}")
+            else:
+                # ═══════════════════════════════════════════════════════════
+                # اگر الگو پیدا نشد، از DID برای لود کانفیگ استفاده می‌کنیم
+                # ═══════════════════════════════════════════════════════════
+                original_did_number = did_number
+                logging.info("📞 Using DID number for config (no pattern in From header): %s", did_number)
+            
             # Also extract from To header for comparison
             to_number = None
             if to and to.uri:
                 to_number = to.uri.user if to.uri.user else None
             
-            new_call = Call(key, mi_conn, sdp, flavor, to, cfg, from_number=caller_number, did_number=did_number)
+            # Pass original_did_number to Call constructor so it's available when OpenAI is initialized
+            new_call = Call(key, mi_conn, sdp, flavor, to, cfg, from_number=caller_number, did_number=did_number, original_did_number=original_did_number)
+            logging.info("✅ Original DID set for config: %s (current DID: %s)", original_did_number, did_number)
             calls[key] = new_call
             
             logging.info("\n" + "=" * 80)

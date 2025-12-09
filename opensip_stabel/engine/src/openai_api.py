@@ -41,6 +41,12 @@ try:
     HAS_NUMPY = True
 except ImportError:
     HAS_NUMPY = False
+try:
+    from num2words import num2words
+    HAS_NUM2WORDS = True
+except ImportError:
+    HAS_NUM2WORDS = False
+    logging.warning("num2words not installed - numbers will not be converted to Persian words")
 
 BACKEND_SERVER_URL = os.getenv("BACKEND_SERVER_URL", "http://localhost:8000")
 
@@ -66,19 +72,44 @@ class OpenAI(AIEngine):
         self.session = None
 
         # === Load DID configuration ===
+        # Try both original DID (what user actually called) and current DID (IVR selection)
         did_number = getattr(call, 'did_number', None)
+        original_did_number = getattr(call, 'original_did_number', None)
         self.did_number = did_number
         
-        if did_number:
-            self.did_config = load_did_config(did_number)
-            if self.did_config:
-                logging.info("✅ DID config loaded for %s: %s", 
-                           did_number, self.did_config.get('description', 'Unknown'))
-            else:
-                logging.warning("⚠️  No DID config for %s, using default", did_number)
-                self.did_config = load_did_config("default")
-        else:
-            logging.warning("⚠️  No DID number available, using default config")
+        # Debug logging
+        logging.info("🔍 OpenAI API: Loading DID config - did_number: %s, original_did_number: %s", 
+                    did_number, original_did_number)
+        
+        # Try loading config: first original DID (what user called), then current DID (IVR), then default
+        self.did_config = None
+        tried_dids = []
+        
+        # Priority 1: Original DID (what the user actually called, e.g., 511882)
+        if original_did_number and original_did_number != did_number:
+            tried_dids.append(f"{original_did_number} (original)")
+            original_config = load_did_config(original_did_number)
+            if original_config:  # Accept config even without description
+                description = original_config.get('description', 'Unknown')
+                logging.info("✅ DID config loaded from original DID %s: %s (IVR routed to: %s)", 
+                           original_did_number, description, did_number)
+                self.did_config = original_config
+        
+        # Priority 2: Current DID (IVR selection, e.g., 1) - only if original didn't work
+        if not self.did_config:
+            if did_number:
+                tried_dids.append(f"{did_number} (current)")
+                current_config = load_did_config(did_number)
+                if current_config:  # Accept config even without description
+                    description = current_config.get('description', 'Unknown')
+                    logging.info("✅ DID config loaded for current DID %s: %s", 
+                               did_number, description)
+                    self.did_config = current_config
+        
+        # Priority 3: Fallback to default
+        if not self.did_config:
+            logging.warning("⚠️  No DID config found (tried: %s), using default", 
+                          ", ".join(tried_dids) if tried_dids else "none")
             self.did_config = load_did_config("default") or {}
 
         # === Merge base config with DID config ===
@@ -335,6 +366,112 @@ class OpenAI(AIEngine):
         if 0 <= hh <= 23 and 0 <= mm <= 59:
             return f"{hh:02d}:{mm:02d}"
         return None
+
+    def _convert_numbers_to_persian_words(self, text: str) -> str:
+        """
+        Convert numbers in text to Persian words for better TTS pronunciation.
+        Handles phone numbers, prices, and other numbers appropriately.
+        """
+        if not HAS_NUM2WORDS or not text:
+            return text
+        
+        # Normalize Persian/Arabic digits to ASCII
+        normalized_text = self._to_ascii_digits(text)
+        
+        # Pattern for phone numbers (Iranian format: 09xxxxxxxxx or 021xxxxxxxx)
+        phone_pattern = r'\b(0\d{2,3}\d{8,9})\b'
+        
+        # Pattern for prices/currency (numbers followed by تومان, ریال, etc.)
+        price_pattern = r'(\d{1,3}(?:[,\s]\d{3})*)\s*(?:تومان|ریال|دلار|یورو|USD|EUR|IRR)?'
+        
+        # Pattern for standalone numbers (not part of phone/price)
+        number_pattern = r'\b(\d+)\b'
+        
+        def replace_phone(match):
+            """Replace phone numbers digit by digit for clarity."""
+            phone = match.group(1)
+            digits = [num2words(int(d), lang='fa') for d in phone]
+            return ' '.join(digits)
+        
+        def replace_price(match):
+            """Replace prices with currency format."""
+            num_str = match.group(1).replace(',', '').replace(' ', '')
+            try:
+                num = int(num_str)
+                # Use currency format for prices
+                persian = num2words(num, lang='fa', to='currency')
+                # Remove "ریال" if already present in text, or add appropriate currency
+                currency = match.group(2) if match.lastindex >= 2 and match.group(2) else ''
+                if currency:
+                    return f"{persian} {currency}"
+                return persian
+            except (ValueError, OverflowError):
+                return match.group(0)
+        
+        def replace_number(match):
+            """Replace standalone numbers."""
+            num_str = match.group(1)
+            try:
+                num = int(num_str)
+                # For small numbers (< 1000), convert to words
+                # For larger numbers, keep as is or convert based on context
+                if num < 1000:
+                    return num2words(num, lang='fa')
+                else:
+                    # For larger numbers, convert but might be too long
+                    # Only convert if reasonable (e.g., < 1 million)
+                    if num < 1000000:
+                        return num2words(num, lang='fa')
+                    else:
+                        # For very large numbers, keep as digits
+                        return match.group(0)
+            except (ValueError, OverflowError):
+                return match.group(0)
+        
+        # Apply replacements in order: phone numbers first, then prices, then other numbers
+        # But we need to avoid double replacement, so we'll mark already replaced parts
+        result = normalized_text
+        
+        # Replace phone numbers
+        result = re.sub(phone_pattern, replace_phone, result)
+        
+        # Replace prices
+        result = re.sub(price_pattern, replace_price, result)
+        
+        # Replace remaining standalone numbers (but skip if they're part of already replaced patterns)
+        # We'll be more careful here - only replace numbers that aren't in phone/price contexts
+        def replace_standalone_number(match):
+            # Check if this number is part of a phone number or price (shouldn't happen, but safety check)
+            start, end = match.span()
+            # If surrounded by digits or special chars, might be part of something else
+            if start > 0 and end < len(result):
+                before = result[start-1] if start > 0 else ''
+                after = result[end] if end < len(result) else ''
+                # Skip if part of email, URL, or other non-speech contexts
+                if '@' in result[max(0, start-5):end+5] or '://' in result[max(0, start-10):end+10]:
+                    return match.group(0)
+            return replace_number(match)
+        
+        result = re.sub(number_pattern, replace_standalone_number, result)
+        
+        return result
+
+    def _convert_numbers_in_output(self, output):
+        """
+        Recursively convert numbers in output dictionary/list to Persian words.
+        This processes all string values in the output structure.
+        """
+        if not HAS_NUM2WORDS:
+            return output
+        
+        if isinstance(output, dict):
+            return {key: self._convert_numbers_in_output(value) for key, value in output.items()}
+        elif isinstance(output, list):
+            return [self._convert_numbers_in_output(item) for item in output]
+        elif isinstance(output, str):
+            return self._convert_numbers_to_persian_words(output)
+        else:
+            return output
 
     def _fetch_weather(self, city: str):
         """Fetch weather information for a city from one-api.ir and format in Persian."""
@@ -981,6 +1118,24 @@ class OpenAI(AIEngine):
                 if t in ["response.created", "response.audio_transcript.done", "conversation.item.created"]:
                     logging.info("OpenAI event: %s - %s", t, json.dumps(msg)[:200])
 
+    async def _send_function_output(self, call_id, output):
+        """
+        Send function output to OpenAI with number conversion to Persian words.
+        This ensures all numbers in the output are converted for better TTS pronunciation.
+        """
+        # Convert numbers in output to Persian words
+        converted_output = self._convert_numbers_in_output(output)
+        
+        await self.ws.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": call_id,
+                     "output": json.dumps(converted_output, ensure_ascii=False)}
+        }))
+        await self.ws.send(json.dumps({
+            "type": "response.create",
+            "response": {"modalities": ["text", "audio"]}
+        }))
+
     async def _handle_function_call(self, name, call_id, args):
         """Handle function calls dynamically - supports both taxi and restaurant."""
         if name == "terminate_call":
@@ -1004,15 +1159,7 @@ class OpenAI(AIEngine):
                     phone=args.get("phone_number")
                 )
             result = await self.run_in_thread(_lookup)
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(result, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, result)
 
         elif name == "schedule_meeting":
             date_str, time_str = self._interpret_meeting_datetime(args)
@@ -1024,15 +1171,7 @@ class OpenAI(AIEngine):
                     subject=args.get("subject")
                 )
             result = await self.run_in_thread(_schedule)
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(result, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, result)
 
         # === Taxi service functions ===
         elif name == "get_origin_destination_userame":
@@ -1044,15 +1183,7 @@ class OpenAI(AIEngine):
             else:
                 logging.warning("FLOW tool: get_weather called but not a taxi service")
                 output = {"error": "این قابلیت فقط برای سرویس تاکسی در دسترس است."}
-                await self.ws.send(json.dumps({
-                    "type": "conversation.item.create",
-                    "item": {"type": "function_call_output", "call_id": call_id,
-                             "output": json.dumps(output, ensure_ascii=False)}
-                }))
-                await self.ws.send(json.dumps({
-                    "type": "response.create",
-                    "response": {"modalities": ["text", "audio"]}
-                }))
+                await self._send_function_output(call_id, output)
 
         # === Restaurant service functions ===
         elif name == "track_order":
@@ -1146,12 +1277,7 @@ class OpenAI(AIEngine):
                 "destination": destination, 
                 "user_name": user_name
             }
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output",
-                         "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
+            await self._send_function_output(call_id, output)
         else:
             missing = []
             if not temp_entry.get("user_name"):
@@ -1163,17 +1289,7 @@ class OpenAI(AIEngine):
             output = {
                 "error": f"لطفاً {' و '.join(missing)} را مجدداً بفرمایید."
             }
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output",
-                         "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
-        
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+            await self._send_function_output(call_id, output)
 
     async def _handle_get_weather(self, call_id, args):
         """Handle get_weather function call for taxi service."""
@@ -1194,20 +1310,11 @@ class OpenAI(AIEngine):
         output_send_time = time.time()
         logging.info(f"📤 Weather Handler: Sending function output to OpenAI at {datetime.now().strftime('%H:%M:%S.%f')[:-3]} | Handler processing time: {(output_send_time - handler_start_time) * 1000:.2f}ms")
         
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {"type": "function_call_output", "call_id": call_id,
-                     "output": json.dumps(result, ensure_ascii=False)}
-        }))
+        await self._send_function_output(call_id, result)
         
         # Log when response.create is sent (triggers OpenAI to speak)
         response_create_time = time.time()
         logging.info(f"🎤 Weather Handler: Requesting OpenAI to generate response (response.create) at {datetime.now().strftime('%H:%M:%S.%f')[:-3]} | Time since handler start: {(response_create_time - handler_start_time) * 1000:.2f}ms")
-        
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
         
         logging.info(f"⏱️  Weather Handler: Total handler time: {(time.time() - handler_start_time) * 1000:.2f}ms")
 
@@ -1217,15 +1324,7 @@ class OpenAI(AIEngine):
         phone_number = args.get("phone_number") or self.call.from_number
         if not phone_number:
             output = {"success": False, "message": "شماره تلفن در دسترس نیست."}
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, output)
             return
         
         normalized_phone = normalize_phone_number(phone_number)
@@ -1252,15 +1351,7 @@ class OpenAI(AIEngine):
             logging.error("Exception tracking order: %s", e)
             output = {"success": False, "message": "خطا در اتصال به سرور"}
         
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {"type": "function_call_output", "call_id": call_id,
-                     "output": json.dumps(output, ensure_ascii=False)}
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
 
     # ---------------------- Direct FAQ handlers ----------------------
     async def _handle_answer_faq(self, call_id, args):
@@ -1331,18 +1422,7 @@ class OpenAI(AIEngine):
             "similarity_score": best_score,
         }
 
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {
-                "type": "function_call_output",
-                "call_id": call_id,
-                "output": json.dumps(output, ensure_ascii=False)
-            }
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
 
     async def _handle_get_menu_specials(self, call_id):
         """Handle get_menu_specials function call."""
@@ -1356,15 +1436,7 @@ class OpenAI(AIEngine):
             logging.error("Exception getting specials: %s", e)
             output = {"success": False, "message": "خطا در اتصال به سرور"}
         
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {"type": "function_call_output", "call_id": call_id,
-                     "output": json.dumps(output, ensure_ascii=False)}
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
 
     async def _handle_search_menu_item(self, call_id, args):
         """Handle search_menu_item function call."""
@@ -1380,15 +1452,7 @@ class OpenAI(AIEngine):
             logging.error("Exception searching menu: %s", e)
             output = {"success": False, "message": "خطا در جستجو"}
         
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {"type": "function_call_output", "call_id": call_id,
-                     "output": json.dumps(output, ensure_ascii=False)}
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
 
     async def _handle_create_order(self, call_id, args):
         """Handle create_order function call."""
@@ -1398,30 +1462,14 @@ class OpenAI(AIEngine):
                 "success": False, 
                 "message": "سفارش قبلی شما در حال پردازش است. لطفا چند لحظه صبر کنید."
             }
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, output)
             return
         
         customer_name = args.get("customer_name")
         phone_number = self.call.from_number or args.get("phone_number")
         if not phone_number:
             output = {"success": False, "message": "شماره تلفن در دسترس نیست. لطفا دوباره تماس بگیرید."}
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, output)
             return
         
         address = args.get("address")
@@ -1451,15 +1499,7 @@ class OpenAI(AIEngine):
                 "message": error_message,
                 "missing_fields": validation_errors
             }
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, output)
             return
         
         normalized_phone = normalize_phone_number(phone_number)
@@ -1498,15 +1538,7 @@ class OpenAI(AIEngine):
             logging.error("Exception creating order: %s", e, exc_info=True)
             output = {"success": False, "message": "خطا در اتصال به سرور"}
         
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {"type": "function_call_output", "call_id": call_id,
-                     "output": json.dumps(output, ensure_ascii=False)}
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
     
     async def _send_order_receipt_sms(self, order: dict, phone_number: str):
         """Send order receipt via SMS"""
@@ -1761,18 +1793,7 @@ class OpenAI(AIEngine):
             "similarity_score": best_score,
         }
 
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {
-                "type": "function_call_output",
-                "call_id": call_id,
-                "output": json.dumps(output, ensure_ascii=False)
-            }
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
 
     # ---------------------- Personal Assistant service handlers ----------------------
     async def _handle_get_contact_info(self, call_id, args):
@@ -1795,15 +1816,7 @@ class OpenAI(AIEngine):
                 "message": "این موضوع دقیقاً در حوزه کاریشه. می‌تونی مستقیم براش بنویسی: 📧 Mahdi.meshkani@gmail.com ایمیلات رو با دقت بررسی می‌کنه."
             }
         
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {"type": "function_call_output", "call_id": call_id,
-                     "output": json.dumps(output, ensure_ascii=False)}
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
 
     async def _handle_get_resume_info(self, call_id, args):
         """Handle get_resume_info function call for Mahdi Meshkani's assistant."""
@@ -1855,15 +1868,7 @@ class OpenAI(AIEngine):
                 "message": "مهارت‌های مهدی شامل پلتفرمهای طراحی گرافیک، برندینگ، بازاریابی دیجیتال، و زبان انگلیسی حرفه‌ای است."
             }
         
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {"type": "function_call_output", "call_id": call_id,
-                     "output": json.dumps(output, ensure_ascii=False)}
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
 
     async def _handle_send_resume_pdf(self, call_id, args):
         """Handle send_resume_pdf function call - automatically sends resume PDF link via SMS to caller's number."""
@@ -1877,15 +1882,7 @@ class OpenAI(AIEngine):
                 "success": False,
                 "error": "شماره تماس در دسترس نیست. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
             }
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, output)
             return
         
         # Normalize phone number
@@ -1896,15 +1893,7 @@ class OpenAI(AIEngine):
                 "success": False,
                 "error": "شماره تماس معتبر نیست. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
             }
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, output)
             return
         
         # Send resume PDF link via SMS
@@ -1936,15 +1925,7 @@ class OpenAI(AIEngine):
                 "error": "متأسفانه ارسال پیامک با مشکل مواجه شد. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
             }
         
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {"type": "function_call_output", "call_id": call_id,
-                     "output": json.dumps(output, ensure_ascii=False)}
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
 
     async def _handle_send_website_info(self, call_id, args):
         """Handle send_website_info function call - automatically sends website link via SMS to caller's number."""
@@ -1958,15 +1939,7 @@ class OpenAI(AIEngine):
                 "success": False,
                 "error": "شماره تماس در دسترس نیست. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
             }
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, output)
             return
         
         # Normalize phone number
@@ -1977,15 +1950,7 @@ class OpenAI(AIEngine):
                 "success": False,
                 "error": "شماره تماس معتبر نیست. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
             }
-            await self.ws.send(json.dumps({
-                "type": "conversation.item.create",
-                "item": {"type": "function_call_output", "call_id": call_id,
-                         "output": json.dumps(output, ensure_ascii=False)}
-            }))
-            await self.ws.send(json.dumps({
-                "type": "response.create",
-                "response": {"modalities": ["text", "audio"]}
-            }))
+            await self._send_function_output(call_id, output)
             return
         
         # Get website from config
@@ -2024,15 +1989,7 @@ class OpenAI(AIEngine):
                 "error": "متأسفانه ارسال پیامک با مشکل مواجه شد. لطفا از طریق ایمیل Mahdi.meshkani@gmail.com درخواست بدید."
             }
         
-        await self.ws.send(json.dumps({
-            "type": "conversation.item.create",
-            "item": {"type": "function_call_output", "call_id": call_id,
-                     "output": json.dumps(output, ensure_ascii=False)}
-        }))
-        await self.ws.send(json.dumps({
-            "type": "response.create",
-            "response": {"modalities": ["text", "audio"]}
-        }))
+        await self._send_function_output(call_id, output)
 
     # ---------------------- lifecycle helpers ----------------------
     def terminate_call(self):
