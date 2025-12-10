@@ -108,8 +108,8 @@ class Call():  # pylint: disable=too-many-instance-attributes
         asyncio.create_task(self.ai.start())
 
         self.first_packet = True
-        loop = asyncio.get_running_loop()
-        loop.add_reader(self.serversock.fileno(), self.read_rtp)
+        # Start real-time RTP reading loop (async)
+        asyncio.create_task(self._read_rtp_loop())
         logging.info("handling %s using %s AI", b2b_key, flavor)
 
     def bind(self, host_ip):
@@ -160,49 +160,94 @@ class Call():  # pylint: disable=too-many-instance-attributes
         self.sdp.media[0].direction = "recvonly"
         self.paused = True
 
+    async def _read_rtp_loop(self):
+        """Real-time async loop for reading RTP packets using loop.add_reader."""
+        loop = asyncio.get_event_loop()
+        self.serversock.setblocking(False)  # Make socket non-blocking
+        
+        # Queue to pass packets from sync callback to async loop
+        packet_queue = asyncio.Queue(maxsize=50)  # Limit queue to prevent memory issues
+        
+        def _read_rtp_callback():
+            """Synchronous callback for loop.add_reader - reads available packets."""
+            try:
+                while True:
+                    try:
+                        data, adr = self.serversock.recvfrom(4096)
+                        try:
+                            packet_queue.put_nowait((data, adr))
+                        except asyncio.QueueFull:
+                            # Queue full - drop oldest packet to keep real-time
+                            try:
+                                packet_queue.get_nowait()
+                                packet_queue.put_nowait((data, adr))
+                            except asyncio.QueueEmpty:
+                                pass
+                    except BlockingIOError:
+                        # No more data available - expected for non-blocking socket
+                        break
+                    except OSError as e:
+                        if e.errno == 11:  # EAGAIN/EWOULDBLOCK
+                            break
+                        else:
+                            logging.error("RTP socket error: %s", e)
+                            break
+            except Exception as e:
+                logging.error("Error in RTP reader callback: %s", e)
+        
+        # Register reader callback
+        loop.add_reader(self.serversock.fileno(), _read_rtp_callback)
+        
+        try:
+            while not self.terminated:
+                try:
+                    # Wait for packet with short timeout
+                    data, adr = await asyncio.wait_for(packet_queue.get(), timeout=0.01)
+                    
+                    # Process first packet
+                    if self.first_packet:
+                        self.first_packet = False
+                        self.client_addr = adr[0]
+                        self.client_port = adr[1]
+                        logging.info("First RTP packet received, client: %s:%d", self.client_addr, self.client_port)
+                        asyncio.create_task(self.send_rtp())
+                    
+                    # Validate source
+                    if adr[0] != self.client_addr or adr[1] != self.client_port:
+                        continue
+                    
+                    # Drop requests if paused
+                    if self.paused:
+                        continue
+                    
+                    # Process packet immediately (REAL-TIME)
+                    try:
+                        packet = decode_rtp_packet(data.hex())
+                        audio = bytes.fromhex(packet['payload'])
+                        
+                        # Send audio to Soniox immediately - await for real-time processing
+                        await self.ai.send(audio)
+                    except ValueError as e:
+                        logging.error("Error decoding RTP packet: %s", e)
+                    except Exception as e:
+                        logging.error("Error processing RTP: %s", e)
+                        
+                except asyncio.TimeoutError:
+                    # Timeout expected - continue to check terminated flag
+                    continue
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    if not self.terminated:
+                        logging.error("RTP receive error: %s", e)
+        finally:
+            # Clean up: remove reader
+            loop.remove_reader(self.serversock.fileno())
+    
     def read_rtp(self):
-        """ Reads a RTP packet """
-    
-        try:
-            data, adr = self.serversock.recvfrom(4096)
-            #logging.info("RTP received: %d bytes from %s:%d", len(data), adr[0], adr[1])
-    
-            if self.first_packet:
-                self.first_packet = False
-                self.client_addr = adr[0]
-                self.client_port = adr[1]
-                logging.info("First RTP packet received, client: %s:%d", self.client_addr, self.client_port)
-                asyncio.create_task(self.send_rtp())
-    
-            if adr[0] != self.client_addr or adr[1] != self.client_port:
-                logging.warning("Ignoring RTP from unexpected source: %s:%d", adr[0], adr[1])
-                return
-        except socket.timeout as e:
-            logging.exception(e)
-            return
-        except Exception as e:
-            logging.error("RTP receive error: %s", e)
-            return
-    
-        # Drop requests if paused
-        if self.paused:
-            return
-            
-        try:
-            packet = decode_rtp_packet(data.hex())
-            audio = bytes.fromhex(packet['payload'])
-            
-            # حالت اکو را غیرفعال کنید - این خط را کامنت کنید یا حذف کنید
-            # self.rtp.put_nowait(audio)
-            # logging.info("ECHO MODE: Echoing back %d bytes of audio", len(audio))
-            
-            # ارسال صدا به OpenAI
-            #logging.info("Sending %d bytes of audio to OpenAI", len(audio))
-            asyncio.create_task(self.ai.send(audio))
-        except ValueError as e:
-            logging.error("Error decoding RTP packet: %s", e)
-        except Exception as e:
-            logging.error("Error processing RTP: %s", e)
+        """Legacy synchronous method - replaced by _read_rtp_loop for real-time processing."""
+        # This method is kept for compatibility but not used
+        pass
 
     async def send_rtp(self):
         """ Sends all RTP packet """

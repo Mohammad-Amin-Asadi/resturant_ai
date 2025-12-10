@@ -2109,11 +2109,12 @@ class OpenAI(AIEngine):
                         self._soniox_accum.append(final_text)
                         if self._soniox_flush_timer:
                             self._soniox_flush_timer.cancel()
+                            self._soniox_flush_timer = None
+                        # REAL-TIME: Flush immediately when final token received (no delay)
+                        # This ensures bot responds immediately when user finishes speaking
                         if not has_nonfinal:
-                            logging.info("FLOW STT: Scheduling delayed flush (no non-final tokens)")
-                            self._soniox_flush_timer = asyncio.create_task(
-                                self._delayed_flush_soniox_segment()
-                            )
+                            logging.info("FLOW STT: Final token received - flushing immediately (REAL-TIME)")
+                            await self._flush_soniox_segment()
                     else:
                         logging.debug("FLOW STT: Ignoring control token: %s", final_text)
 

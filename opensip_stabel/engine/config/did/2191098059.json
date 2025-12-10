@@ -6,7 +6,7 @@
     "backend_url": "http://localhost:8001",
     
     "openai": {
-      "model": "gpt-4o-mini-realtime-preview-2024-12-17",
+      "model": "gpt-realtime-2025-08-28",
       "voice": "alloy",
       "temperature": 0.6,
       "welcome_message": "سلام، با پشتیبانی دایرکت تماس گرفته‌اید. لطفاً هر سوالی درباره دایرکت و امکاناتش دارید بپرسید تا دقیقاً بر اساس فهرست سؤالات متداول به شما پاسخ بدهم.",
