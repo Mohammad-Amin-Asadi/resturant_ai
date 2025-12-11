@@ -46,7 +46,8 @@ class OrderSerializer(serializers.ModelSerializer):
         for item_data in items_data:
             OrderItem.objects.create(order=order, **item_data)
         
-        # Calculate and save total
+        # Prefetch items to avoid N+1 in calculate_total
+        order = Order.objects.prefetch_related('items').get(id=order.id)
         order.calculate_total()
         order.save()
         
@@ -66,7 +67,8 @@ class OrderSerializer(serializers.ModelSerializer):
             for item_data in items_data:
                 OrderItem.objects.create(order=instance, **item_data)
             
-            # Recalculate total
+            # Prefetch items to avoid N+1 in calculate_total
+            instance = Order.objects.prefetch_related('items').get(id=instance.id)
             instance.calculate_total()
         
         instance.save()

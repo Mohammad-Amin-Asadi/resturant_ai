@@ -3,6 +3,9 @@ home.zip
 غذای ایرانی.ini
 docker/.env
 MULTI_TENANT_SETUP.md
+opensip_stabel/engine/config/did/*.json
+QA_REPORT.md
+QA_SUMMARY.md
 src/__pycache__/*
 *\.swp
 *\.ini
@@ -11,5 +14,16 @@ docker/.env
 roshanfekr/*
 test/*
 MULTI_TENANT_SETUP.md
-MULTI_TENANT_SETUP.md
 test/
+docs/*
+# Security: Environment files and secrets
+.env
+.env.local
+.env.production
+.env.*.local
+*.key
+*.pem
+*.cert
+secrets/
+*.secret
+*.md

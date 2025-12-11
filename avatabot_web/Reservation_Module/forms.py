@@ -1,5 +1,11 @@
 from django import forms
-from Reservation_Module.models import RestaurantSettings, TelephoneTaxiModel
+# Import from new app locations
+try:
+    from restaurant.models import RestaurantSettings
+    from taxi.models import TelephoneTaxiModel
+except ImportError:
+    # Fallback for backward compatibility
+    from Reservation_Module.models import RestaurantSettings, TelephoneTaxiModel
 
 
 class SettingsForm(forms.ModelForm):

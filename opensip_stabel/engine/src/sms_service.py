@@ -1,26 +1,51 @@
 #!/usr/bin/env python
 """
 SMS Service for sending notifications via LimoSMS API
+Loads configuration from DID config or environment variables.
 """
 
 import logging
 import requests
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
-# SMS API Configuration
-SMS_API_URL = os.getenv("SMS_API_URL", "https://api.limosms.com/api/sendsms")
-SMS_API_KEY = os.getenv("SMS_API_KEY", "8dd73576-e25c-4624-aba2-b0ed72bfab89")
-SMS_SENDER_NUMBER = os.getenv("SMS_SENDER_NUMBER", "10000000002027")
+logger = logging.getLogger(__name__)
 
 
 class SMSService:
     """Service for sending SMS messages via LimoSMS API"""
     
-    def __init__(self):
-        self.api_url = SMS_API_URL
-        self.api_key = SMS_API_KEY
-        self.sender_number = SMS_SENDER_NUMBER
+    def __init__(self, config: Dict[str, Any] = None):
+        """
+        Initialize SMS service with configuration.
+        
+        Args:
+            config: Optional DID config dictionary. If provided, uses SMS settings from it.
+                   Otherwise falls back to environment variables.
+        """
+        environment = os.getenv('ENVIRONMENT', 'production')
+        
+        if config and isinstance(config, dict):
+            sms_config = config.get('sms', {})
+            self.api_url = sms_config.get('api_url') or os.getenv("SMS_API_URL", "https://api.limosms.com/api/sendsms")
+            self.api_key = sms_config.get('api_key') or os.getenv("SMS_API_KEY")
+            self.sender_number = sms_config.get('sender_number') or os.getenv("SMS_SENDER_NUMBER")
+            self.sms_enabled = sms_config.get('enabled', True)  # Default to enabled if not specified
+        else:
+            self.api_url = os.getenv("SMS_API_URL", "https://api.limosms.com/api/sendsms")
+            self.api_key = os.getenv("SMS_API_KEY")
+            self.sender_number = os.getenv("SMS_SENDER_NUMBER")
+            self.sms_enabled = True  # Default to enabled
+        
+        # Validate SMS configuration
+        if not self.api_key or self.api_key.strip() == "":
+            if environment == 'production' and self.sms_enabled:
+                # Only log as error if SMS is explicitly enabled but key is missing
+                logger.warning("⚠️  SMS API key not configured in production (SMS will be disabled for this call). Set SMS_API_KEY env var or configure in DID config.")
+            else:
+                logger.debug("ℹ️  SMS disabled: No API key configured (this is OK if SMS is not needed)")
+        else:
+            logger.info("✅ SMS configured: API key present, URL: %s", self.api_url)
     
     def send_sms(self, receiver: str, message: str) -> bool:
         """
@@ -33,8 +58,13 @@ class SMSService:
         Returns:
             bool: True if successful, False otherwise
         """
+        # Check if SMS is enabled and configured
+        if not self.api_key or not self.api_key.strip():
+            logger.debug("ℹ️  SMS not sent: API key not configured (SMS disabled for this call)")
+            return False
+        
         if not receiver or not message:
-            logging.warning("SMS: Missing receiver or message")
+            logger.warning("⚠️  SMS: Missing receiver or message")
             return False
         
         # Normalize phone number

@@ -3,12 +3,17 @@ from django.urls import path
 
 from Reservation_Module.views import (
     OrderListView, CustomerListView, AddOrderView, MenuAPIView,
-    OrderTrackingView, CustomerInfoView, update_order_status, delete_order, delete_customer
+    OrderTrackingView, CustomerInfoView, update_order_status, delete_order, delete_customer,
+    TenantConfigView
 )
+from Reservation_Module.health_views import health_check
 
 app_name = 'restaurant'
 
 urlpatterns = [
+    # Health check endpoint (for Docker healthchecks)
+    path('healthz/', health_check, name='health_check'),
+    
     # Frontend views
     path('', OrderListView.as_view(), name='order_list_url'),
     path('customers/', CustomerListView.as_view(), name='customers_list_url'),
@@ -21,4 +26,5 @@ urlpatterns = [
     path('api/customers/<int:customer_id>/delete/', delete_customer, name='api_delete_customer'),
     path('api/orders/<int:order_id>/status/', update_order_status, name='api_update_status'),
     path('api/orders/<int:order_id>/delete/', delete_order, name='api_delete_order'),
+    path('api/tenant-config/<str:tenant_id>/', TenantConfigView.as_view(), name='api_tenant_config'),
 ]

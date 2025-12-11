@@ -1,0 +1,3 @@
+"""
+Shared domain tests.
+"""

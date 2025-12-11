@@ -6,3 +6,5 @@ sipmessage
 requests
 pycryptodome
 num2words
+numpy
+websockets

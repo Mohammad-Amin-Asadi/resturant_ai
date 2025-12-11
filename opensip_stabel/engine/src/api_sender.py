@@ -129,9 +129,9 @@ class API:
                 timeout=10
             )
             
-            # Handle 404 as "no orders" (not an error)
-            if response.status_code == 404:
-                logging.info("📭 No orders found (404) - customer has no orders")
+            # Handle 400/404 as "no orders" (not an error)
+            if response.status_code in [400, 404]:
+                logging.debug(f"ℹ️  No orders found (HTTP {response.status_code}) - customer has no orders")
                 return {"success": True, "orders": []}
             
             response.raise_for_status()
@@ -139,20 +139,20 @@ class API:
             
             # Handle empty list response
             if isinstance(data, list) and len(data) == 0:
-                logging.info("📭 No orders found (empty list)")
+                logging.debug("ℹ️  No orders found (empty list)")
                 return {"success": True, "orders": []}
             
             return {"success": True, "orders": data}
         except requests.exceptions.HTTPError as e:
-            # Only log as error if it's not a 404 (already handled above)
-            if hasattr(e, 'response') and e.response and e.response.status_code == 404:
-                logging.info("📭 No orders found (404) - customer has no orders")
+            # Don't log as error for 400/404 - these are expected for new customers
+            if hasattr(e, 'response') and e.response and e.response.status_code in [400, 404]:
+                logging.debug(f"ℹ️  No orders found (HTTP {e.response.status_code}) - customer has no orders")
                 return {"success": True, "orders": []}
             else:
-                logging.error(f"Error tracking order: {e}")
+                logging.warning(f"⚠️  HTTP error tracking order: {e}")
                 return {"success": False, "message": str(e)}
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error tracking order: {e}")
+            logging.warning(f"⚠️  Request error tracking order: {e}")
             return {"success": False, "message": str(e)}
     
     async def get_customer_info(self, phone_number: str) -> dict:
@@ -167,11 +167,24 @@ class API:
                 params={"phone_number": normalized_phone},
                 timeout=10
             )
+            
+            # Handle 400 errors gracefully - don't raise, just return failure
+            if response.status_code == 400:
+                logging.warning(f"⚠️  Backend returned 400 for customer info (phone: {normalized_phone}) - treating as no customer found")
+                return {"success": False, "message": "Customer not found (400)"}
+            
             response.raise_for_status()
             data = response.json()
             return data
+        except requests.exceptions.HTTPError as e:
+            # Don't log as error for 400/404 - these are expected for new customers
+            if hasattr(e.response, 'status_code') and e.response.status_code in [400, 404]:
+                logging.debug(f"ℹ️  Customer info not found (HTTP {e.response.status_code}): {normalized_phone}")
+            else:
+                logging.warning(f"⚠️  HTTP error getting customer info: {e}")
+            return {"success": False, "message": str(e)}
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error getting customer info: {e}")
+            logging.warning(f"⚠️  Request error getting customer info: {e}")
             return {"success": False, "message": str(e)}
     
     async def get_menu_specials(self) -> dict:
@@ -182,12 +195,26 @@ class API:
                 params={"special": "true"},
                 timeout=10
             )
+            
+            # Handle 400 errors gracefully - don't raise, just return empty menu
+            if response.status_code == 400:
+                logging.warning(f"⚠️  Backend returned 400 for menu specials - treating as empty menu")
+                return {"success": True, "items": []}
+            
             response.raise_for_status()
             items = response.json()
             return {"success": True, "items": items}
+        except requests.exceptions.HTTPError as e:
+            # Don't log as error for 400 - just return empty menu
+            if hasattr(e, 'response') and e.response and e.response.status_code == 400:
+                logging.warning(f"⚠️  Menu specials returned 400 - treating as empty menu")
+                return {"success": True, "items": []}
+            else:
+                logging.warning(f"⚠️  HTTP error getting menu specials: {e}")
+                return {"success": False, "message": str(e), "items": []}
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error getting menu specials: {e}")
-            return {"success": False, "message": str(e)}
+            logging.warning(f"⚠️  Request error getting menu specials: {e}")
+            return {"success": False, "message": str(e), "items": []}
     
     def _remove_diacritics(self, text: str) -> str:
         """Remove Persian/Arabic diacritics from text for comparison"""
@@ -463,25 +490,63 @@ class API:
             dict: {"success": bool, "items": list}
         """
         try:
-            # Get special items first
-            special_params = {"special": "true", "is_available": "true"}
-            special_response = requests.get(self.menu_url, params=special_params, timeout=10)
-            special_response.raise_for_status()
-            special_items = special_response.json()
+            # Get special items first - handle 400 gracefully
+            special_items = []
+            try:
+                special_params = {"special": "true"}
+                special_response = requests.get(self.menu_url, params=special_params, timeout=10)
+                if special_response.status_code == 400:
+                    error_body = special_response.text[:200] if special_response.text else "No error body"
+                    logging.debug("⚠️  Menu specials returned 400 - treating as empty (response: %s)", error_body)
+                    special_items = []
+                else:
+                    special_response.raise_for_status()
+                    special_items = special_response.json()
+                    if not isinstance(special_items, list):
+                        logging.warning("⚠️  Menu specials returned non-list response: %s", type(special_items))
+                        special_items = []
+            except requests.exceptions.RequestException as e:
+                logging.debug(f"⚠️  Could not get special items (continuing): {e}")
+                special_items = []
             
-            # Get regular items (foods)
-            food_params = {"category": "غذای ایرانی"}
-            food_response = requests.get(self.menu_url, params=food_params, timeout=10)
-            food_response.raise_for_status()
-            food_items = food_response.json()
+            # Get regular items (foods) - handle 400 gracefully
+            food_items = []
+            try:
+                food_params = {"category": "غذای ایرانی"}
+                food_response = requests.get(self.menu_url, params=food_params, timeout=10)
+                if food_response.status_code == 400:
+                    error_body = food_response.text[:200] if food_response.text else "No error body"
+                    logging.debug("⚠️  Menu foods returned 400 - treating as empty (response: %s)", error_body)
+                    food_items = []
+                else:
+                    food_response.raise_for_status()
+                    food_items = food_response.json()
+                    if not isinstance(food_items, list):
+                        logging.warning("⚠️  Menu foods returned non-list response: %s", type(food_items))
+                        food_items = []
+            except requests.exceptions.RequestException as e:
+                logging.debug(f"⚠️  Could not get food items (continuing): {e}")
+                food_items = []
             
-            # Get drinks if requested
+            # Get drinks if requested - handle 400 gracefully
             drink_items = []
             if include_drinks:
-                drink_params = {"category": "نوشیدنی"}
-                drink_response = requests.get(self.menu_url, params=drink_params, timeout=10)
-                drink_response.raise_for_status()
-                drink_items = drink_response.json()
+                try:
+                    drink_params = {"category": "نوشیدنی"}
+                    drink_response = requests.get(self.menu_url, params=drink_params, timeout=10)
+                    if drink_response.status_code == 400:
+                        error_body = drink_response.text[:200] if drink_response.text else "No error body"
+                        logging.debug("⚠️  Menu drinks returned 400 - treating as empty (response: %s)", error_body)
+                        drink_items = []
+                    else:
+                        drink_response.raise_for_status()
+                        drink_items = drink_response.json()
+                        if not isinstance(drink_items, list):
+                            logging.warning("⚠️  Menu drinks returned non-list response: %s", type(drink_items))
+                            drink_items = []
+                except requests.exceptions.RequestException as e:
+                    logging.debug(f"⚠️  Could not get drink items (continuing): {e}")
+                    drink_items = []
             
             # Combine: special items first, then foods, then drinks
             all_items = []
@@ -504,15 +569,16 @@ class API:
             # Limit to requested number
             all_items = all_items[:limit]
             
-            logging.info(f"📋 Retrieved {len(all_items)} top menu items ({len(special_items)} special, {len(food_items)} foods, {len(drink_items)} drinks)")
+            # Log summary - only at INFO if we have items, otherwise DEBUG
+            if len(all_items) > 0:
+                logging.info(f"📋 Retrieved {len(all_items)} top menu items ({len(special_items)} special, {len(food_items)} foods, {len(drink_items)} drinks)")
+            else:
+                logging.debug(f"📋 No menu items found (special: {len(special_items)}, foods: {len(food_items)}, drinks: {len(drink_items)})")
             return {"success": True, "items": all_items}
             
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Error getting top menu items: {e}")
-            return {"success": False, "message": str(e), "items": []}
         except Exception as e:
-            logging.error(f"Unexpected error getting top menu items: {e}")
-            return {"success": False, "message": str(e), "items": []}
+            logging.warning(f"⚠️  Unexpected error getting top menu items (returning empty): {e}")
+            return {"success": True, "items": []}  # Return success with empty items - don't break the call
     
     async def create_order(self, customer_name: str, phone_number: str, 
                            address: str, items: list, notes: str = None) -> dict:

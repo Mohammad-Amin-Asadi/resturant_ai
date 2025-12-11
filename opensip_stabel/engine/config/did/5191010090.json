@@ -3,7 +3,7 @@
   "restaurant_id": "bozorgmehr",
   "description": "Configuration for Bozorgmehr Restaurant (DID: 5191010090)",
   
-  "backend_url": "http://localhost:8000",
+  "backend_url": "http://backend-restaurant:8000",
   
   "openai": {
     "model": "gpt-4o-mini-realtime-preview-2024-12-17",

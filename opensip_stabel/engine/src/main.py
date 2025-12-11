@@ -22,6 +22,7 @@
 """ Main module that starts the Deepgram AI integration """
 
 import sys
+import os
 import logging
 import argparse
 from config import Config
@@ -46,13 +47,28 @@ parser.add_argument('-c', '--config',
 parsed_args = parser.parse_args()
 Config.init(parsed_args.config)
 
+# Configure logging level from environment variable
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, LOG_LEVEL, logging.INFO)
+if not isinstance(log_level, int):
+    log_level = logging.INFO
+
 logging.basicConfig(
-    level=logging.INFO,  # Set level to INFO or DEBUG for more verbosity
+    level=log_level,
     format='%(asctime)s - tid: %(thread)d - %(levelname)s - %(message)s',
 )
+logging.info("Logging level set to: %s (from LOG_LEVEL=%s)", logging.getLevelName(log_level), LOG_LEVEL)
 
 if __name__ == '__main__':
-    from engine import run
-    run()
+    try:
+        from engine import run
+        run()
+    except ImportError as e:
+        logging.error("Failed to import required modules: %s", e)
+        logging.error("Please check that all dependencies are installed and PYTHONPATH is set correctly.")
+        sys.exit(1)
+    except Exception as e:
+        logging.error("Fatal error during startup: %s", e, exc_info=True)
+        sys.exit(1)
 
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4

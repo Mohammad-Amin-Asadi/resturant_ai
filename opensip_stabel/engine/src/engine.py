@@ -39,27 +39,27 @@ from codec import UnsupportedCodec
 from utils import UnknownSIPUser
 import utils as utils
 
-# ═══════════════════════════════════════════════════════════
-# IP Whitelist - این IP ها همیشه قبول می‌شوند
-# ═══════════════════════════════════════════════════════════
-WHITELISTED_IPS = [
-    "85.133.145.237",      # Simotel PBX (شماره 09154211914)     # IP دیگر
-    "127.0.0.1",           # Localhost
-    "185.58.241.63",
-    "185.110.188.112",       # Server خودمون
-    "188.0.240.162"
-]
+from engine_config import EngineConfig
+from engine_utils.call_manager import CallManager
 
-def is_ip_whitelisted(sdp_str):
-    """بررسی اینکه آیا IP تماس‌گیرنده در whitelist هست"""
+def is_ip_whitelisted(sdp_str, did_config=None):
+    """
+    بررسی اینکه آیا IP تماس‌گیرنده در whitelist هست
+    
+    Args:
+        sdp_str: SDP string
+        did_config: Optional DID config dictionary for tenant-specific whitelist
+    """
     try:
+        whitelist = EngineConfig.get_ip_whitelist(did_config)
+        
         # استخراج IP از SDP
         for line in sdp_str.split('\n'):
             if line.startswith('o=') or line.startswith('c='):
                 parts = line.split()
                 if len(parts) >= 3:
                     ip = parts[-1].strip()
-                    if ip in WHITELISTED_IPS:
+                    if ip in whitelist:
                         logging.info(f"✅ IP Whitelisted: {ip} - Accepting without filters")
                         return True, ip
         return False, None
@@ -74,7 +74,8 @@ mi_port = int(mi_cfg.get("port", "MI_PORT", "8080"))
 
 mi_conn = OpenSIPSMI(conn="datagram", datagram_ip=mi_ip, datagram_port=mi_port)
 
-calls = {}
+# Global call manager instance
+call_manager = CallManager()
 
 
 def mi_reply(key, method, code, reason, body=None):
@@ -335,7 +336,7 @@ def handle_call(call, key, method, params):
             # Pass original_did_number to Call constructor so it's available when OpenAI is initialized
             new_call = Call(key, mi_conn, sdp, flavor, to, cfg, from_number=caller_number, did_number=did_number, original_did_number=original_did_number)
             logging.info("✅ Original DID set for config: %s (current DID: %s)", original_did_number, did_number)
-            calls[key] = new_call
+            call_manager.add_call(key, new_call)
             
             logging.info("\n" + "=" * 80)
             logging.info("✅ CALL ACCEPTED")
@@ -398,7 +399,7 @@ def handle_call(call, key, method, params):
         logging.info("Call ID: %s", key)
         logging.info("=" * 80)
         asyncio.create_task(call.close())
-        calls.pop(key, None)
+        call_manager.remove_call(key)
     
     if not call:
         try:
@@ -409,26 +410,40 @@ def handle_call(call, key, method, params):
 
 
 def udp_handler(data):
-    """ UDP handler of events received """
+    """ UDP handler of events received from OpenSIPS """
+    
+    logging.debug("📨 Received UDP event from OpenSIPS: %s", data)
 
     if 'params' not in data:
+        logging.warning("⚠️  Received event without 'params' field: %s", data)
         return
     params = data['params']
 
     if 'key' not in params:
+        logging.warning("⚠️  Received event without 'key' field: %s", params)
         return
     key = params['key']
 
     if 'method' not in params:
+        logging.warning("⚠️  Received event without 'method' field: %s", params)
         return
     method = params['method']
+    
+    logging.info("🔔 OpenSIPS event received: method=%s, key=%s", method, key)
+    
     if utils.indialog(params):
+        # Sequential request within existing dialog
+        logging.info("📞 Sequential request in dialog for call: %s", key)
         # search for the call
-        if key not in calls:
+        if not call_manager.has_call(key):
+            logging.warning("❌ Call not found for key %s (may have been terminated)", key)
             mi_reply(key, method, 481, 'Call/Transaction Does Not Exist')
             return
-        call = calls[key]
+        call = call_manager.get_call(key)
+        logging.info("✅ Found existing call: %s (DID: %s)", key, getattr(call, 'did_number', 'unknown'))
     else:
+        # Initial request - new call
+        logging.info("📞 Initial request - new call: %s", key)
         call = None
 
     handle_call(call, key, method, params)
@@ -441,10 +456,7 @@ async def shutdown(s, loop, event):
     for task in tasks:
         task.cancel()
     logging.info("Cancelling %d outstanding tasks", len(tasks))
-    for call in calls.values():
-        if call.terminated:
-            continue
-        await call.close()
+    await call_manager.close_all()
     
     # Try to unsubscribe from events gracefully with timeout
     if event:
@@ -488,10 +500,17 @@ async def shutdown(s, loop, event):
 
 async def async_run():
     """ Main function """
-    host_ip = Config.engine("event_ip", "EVENT_IP", "127.0.0.1")
+    # Default to 0.0.0.0 for Docker compatibility (allows connections from outside container)
+    # If OpenSIPS is on the same host, it can connect via exposed port
+    host_ip = Config.engine("event_ip", "EVENT_IP", "0.0.0.0")
     # Use port 0 (random port) to avoid conflicts with stale processes
     # This allows the OS to assign any available port
     port = int(Config.engine("event_port", "EVENT_PORT", "0"))
+    
+    logging.info("🔧 Engine network configuration:")
+    logging.info("   Event listener IP: %s", host_ip)
+    logging.info("   Event listener port: %s (auto-assigned)", port if port == 0 else port)
+    logging.info("   OpenSIPS MI connection: %s:%d", mi_ip, mi_port)
     
     # Wait for OpenSIPS to be ready and any stale sockets to be released
     await asyncio.sleep(1.0)
@@ -551,7 +570,8 @@ async def async_run():
         logging.error("Failed to subscribe to event after all retries")
         return
 
-    _, port = event.socket.sock.getsockname()
+    _, actual_port = event.socket.sock.getsockname()
+    actual_ip, _ = event.socket.sock.getsockname()
 
     logging.info("\n" + "╔" + "=" * 78 + "╗")
     logging.info("║" + " " * 15 + "🍽️  RESTAURANT ORDERING SYSTEM (Bozorgmehr) 🍽️" + " " * 14 + "║")
@@ -559,8 +579,11 @@ async def async_run():
     logging.info("║  System: OpenAI Realtime + Soniox STT (Persian)" + " " * 28 + "║")
     logging.info("║  Features: Order Taking, Tracking, Menu Recommendations" + " " * 19 + "║")
     logging.info("╚" + "=" * 78 + "╝")
-    logging.info("\nStarting server at %s:%hu", host_ip, port)
-    logging.info("Waiting for incoming calls...")
+    logging.info("\n🚀 Engine started successfully!")
+    logging.info("   Listening for OpenSIPS events on: %s:%d", actual_ip, actual_port)
+    logging.info("   OpenSIPS MI: %s:%d", mi_ip, mi_port)
+    logging.info("   ⚠️  IMPORTANT: Configure OpenSIPS event_datagram to send events to this address")
+    logging.info("   Waiting for incoming calls...")
 
     loop = asyncio.get_running_loop()
     stop = loop.create_future()

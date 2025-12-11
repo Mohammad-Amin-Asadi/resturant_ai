@@ -3,6 +3,8 @@
 DID-based configuration loader for multi-tenant support.
 Loads JSON configuration files based on the DID (Direct Inward Dialing) number.
 Each restaurant/tenant can have its own configuration file named after the DID number.
+
+Can optionally merge with database configs from Django backend via HTTP API.
 """
 
 import os
@@ -10,6 +12,11 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict, Optional, Any
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 
 
 class DIDConfigLoader:
@@ -170,13 +177,16 @@ class DIDConfigLoader:
         logging.error("❌ No config file found (not even default.json)")
         return None
     
-    def load_config(self, did: str) -> Dict[str, Any]:
+    def load_config(self, did: str, merge_with_db: bool = False, backend_url: str = None) -> Dict[str, Any]:
         """
         Load configuration for a specific DID number.
         Uses cache to avoid reloading files.
+        Optionally merges with database config from Django backend.
         
         Args:
             did: DID number (the number being called)
+            merge_with_db: If True, attempt to merge with database config from backend
+            backend_url: Backend URL for fetching database config (optional)
             
         Returns:
             Dictionary containing configuration, or empty dict if not found
@@ -186,38 +196,86 @@ class DIDConfigLoader:
             return self._load_default_config()
         
         # Check cache first
-        if did in self._config_cache:
+        cache_key = f"{did}:{merge_with_db}"
+        if cache_key in self._config_cache:
             logging.debug("DID Config: Using cached config for %s", did)
-            return self._config_cache[did]
+            return self._config_cache[cache_key]
         
         # Find and load config file
         config_file = self._find_config_file(did)
         
-        if not config_file:
-            logging.warning("DID Config: No config file found for DID: %s, using default", did)
-            return self._load_default_config()
+        json_config = {}
+        if config_file:
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    json_config = json.load(f)
+                
+                # Validate config structure
+                if not isinstance(json_config, dict):
+                    logging.error("DID Config: Invalid config file format for %s", did)
+                    json_config = {}
+                else:
+                    logging.info("DID Config: Loaded JSON config for DID %s from %s", did, config_file.name)
+            except json.JSONDecodeError as e:
+                logging.error("DID Config: JSON decode error for %s: %s", did, e)
+            except Exception as e:
+                logging.error("DID Config: Error loading config file for %s: %s", did, e)
+        
+        # If no JSON config found, try default
+        if not json_config:
+            json_config = self._load_default_config()
+        
+        # Optionally merge with database config
+        if merge_with_db and HAS_REQUESTS:
+            db_config = self._load_db_config(did, backend_url)
+            if db_config:
+                # Database config takes precedence over JSON
+                merged = json_config.copy()
+                merged.update(db_config)
+                json_config = merged
+                logging.info("DID Config: Merged with database config for DID %s", did)
+        
+        # Cache the final config
+        self._config_cache[cache_key] = json_config
+        
+        return json_config
+    
+    def _load_db_config(self, did: str, backend_url: str = None) -> Optional[Dict[str, Any]]:
+        """
+        Load tenant configuration from Django backend via HTTP API.
+        
+        Args:
+            did: DID number
+            backend_url: Backend URL (if None, tries to get from config or env)
+            
+        Returns:
+            Database config dictionary or None
+        """
+        if not HAS_REQUESTS:
+            logging.debug("DID Config: requests library not available, skipping DB config")
+            return None
+        
+        if not backend_url:
+            backend_url = os.getenv('BACKEND_SERVER_URL', 'http://backend-restaurant:8000')
+        
+        normalized_did = self._normalize_did(did)
         
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
+            api_url = f"{backend_url.rstrip('/')}/api/tenant-config/{normalized_did}/"
+            response = requests.get(api_url, timeout=2)
             
-            # Validate config structure
-            if not isinstance(config, dict):
-                logging.error("DID Config: Invalid config file format for %s", did)
-                return self._load_default_config()
-            
-            # Cache the config
-            self._config_cache[did] = config
-            
-            logging.info("DID Config: Loaded config for DID %s from %s", did, config_file.name)
-            return config
-            
-        except json.JSONDecodeError as e:
-            logging.error("DID Config: JSON decode error for %s: %s", did, e)
-            return self._load_default_config()
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 404:
+                logging.debug("DID Config: No database config found for DID %s", did)
+            else:
+                logging.warning("DID Config: Backend returned status %d for DID %s", response.status_code, did)
+        except requests.exceptions.RequestException as e:
+            logging.debug("DID Config: Could not fetch DB config for DID %s: %s", did, e)
         except Exception as e:
-            logging.error("DID Config: Error loading config for %s: %s", did, e)
-            return self._load_default_config()
+            logging.warning("DID Config: Error loading DB config for DID %s: %s", did, e)
+        
+        return None
     
     def _load_default_config(self) -> Dict[str, Any]:
         """Load default configuration or return empty dict."""

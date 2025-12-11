@@ -5,25 +5,40 @@ import os
 import logging
 import requests
 
-# SMS API Configuration
-SMS_API_URL = os.getenv("SMS_API_URL", "https://api.limosms.com/api/sendsms")
-SMS_API_KEY = os.getenv("SMS_API_KEY", "8dd73576-e25c-4624-aba2-b0ed72bfab89")
-SMS_SENDER_NUMBER = os.getenv("SMS_SENDER_NUMBER", "10000000002027")
+# Import from shared (primary location)
+try:
+    from shared.config_settings import ConfigSettings
+except ImportError:
+    # Fallback for backward compatibility during migration
+    try:
+        from Reservation_Module.config_settings import ConfigSettings
+    except ImportError:
+        logger.error("ConfigSettings not found in shared or Reservation_Module")
+        raise
+
+logger = logging.getLogger(__name__)
 
 
-def send_sms(receiver: str, message: str) -> bool:
+def send_sms(receiver: str, message: str, tenant_id: str = None) -> bool:
     """
     Send SMS to a receiver
     
     Args:
         receiver: Phone number (e.g., "09154211914")
         message: SMS message text
+        tenant_id: Optional tenant ID for tenant-specific SMS config
         
     Returns:
         bool: True if successful, False otherwise
     """
     if not receiver or not message:
-        logging.warning("SMS: Missing receiver or message")
+        logger.warning("SMS: Missing receiver or message")
+        return False
+    
+    sms_config = ConfigSettings.get_sms_config(tenant_id)
+    
+    if not sms_config.get('api_key'):
+        logger.error("SMS: API key not configured. Set SMS_API_KEY env var or configure in tenant config.")
         return False
     
     # Normalize phone number (inline implementation)
@@ -59,7 +74,7 @@ def send_sms(receiver: str, message: str) -> bool:
     normalized_receiver = normalize_phone(receiver)
     
     if not normalized_receiver:
-        logging.error(f"❌ SMS: Invalid phone number format: {receiver}")
+        logger.error(f"❌ SMS: Invalid phone number format: {receiver}")
         return False
     
     # Ensure phone number starts with 0 (Iranian format)
@@ -73,42 +88,46 @@ def send_sms(receiver: str, message: str) -> bool:
         # MobileNumber must be a list according to API format
         payload = {
             'Message': message,
-            'SenderNumber': SMS_SENDER_NUMBER,
+            'SenderNumber': sms_config.get('sender_number'),
             'MobileNumber': [normalized_receiver]  # Always a list
         }
         
-        headers = {"ApiKey": SMS_API_KEY}
+        headers = {"ApiKey": sms_config.get('api_key')}
         
-        logging.info(f"📱 Attempting to send SMS to {normalized_receiver} (original: {receiver})")
-        logging.info(f"📱 SMS API URL: {SMS_API_URL}")
-        logging.info(f"📱 SMS payload: {payload}")
+        logger.info(f"📱 Attempting to send SMS to {normalized_receiver} (original: {receiver})")
+        logger.info(f"📱 SMS API URL: {sms_config.get('api_url')}")
         
-        response = requests.post(SMS_API_URL, json=payload, headers=headers, timeout=10)
+        response = requests.post(
+            sms_config.get('api_url'),
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
         
         # Log response details
-        logging.info(f"📱 SMS API response status: {response.status_code}")
-        logging.info(f"📱 SMS API response text: {response.text}")
+        logger.info(f"📱 SMS API response status: {response.status_code}")
+        logger.info(f"📱 SMS API response text: {response.text}")
         
         # Check if response is successful
         if response.status_code == 200:
             try:
                 response_json = response.json()
-                logging.info(f"📱 SMS API response JSON: {response_json}")
+                logger.info(f"📱 SMS API response JSON: {response_json}")
             except:
                 pass
         
         response.raise_for_status()
         
-        logging.info(f"✅ SMS sent successfully to {normalized_receiver}")
+        logger.info(f"✅ SMS sent successfully to {normalized_receiver}")
         return True
         
     except requests.exceptions.RequestException as e:
-        logging.error(f"❌ Failed to send SMS to {normalized_receiver}: {e}")
+        logger.error(f"❌ Failed to send SMS to {normalized_receiver}: {e}")
         if hasattr(e, 'response') and e.response:
-            logging.error(f"SMS API response status: {e.response.status_code}")
-            logging.error(f"SMS API response text: {e.response.text}")
+            logger.error(f"SMS API response status: {e.response.status_code}")
+            logger.error(f"SMS API response text: {e.response.text}")
         return False
     except Exception as e:
-        logging.error(f"❌ Unexpected error sending SMS to {normalized_receiver}: {e}", exc_info=True)
+        logger.error(f"❌ Unexpected error sending SMS to {normalized_receiver}: {e}", exc_info=True)
         return False
 

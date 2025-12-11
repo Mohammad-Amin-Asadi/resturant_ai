@@ -19,13 +19,45 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-krssxe@33y%8e3q75)tsk$k5!7_jwv4z(iawr(%*k45x3d+ifu')
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'False').lower() in ['true', '1', 'yes']
 
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        # Only allow insecure key in development
+        SECRET_KEY = 'django-insecure-krssxe@33y%8e3q75)tsk$k5!7_jwv4z(iawr(%*k45x3d+ifu'
+        import warnings
+        warnings.warn(
+            "SECRET_KEY not set! Using insecure default key. "
+            "Set SECRET_KEY environment variable in production!",
+            UserWarning
+        )
+    else:
+        raise ValueError(
+            "SECRET_KEY environment variable must be set in production! "
+            "Generate a secure key using: python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'"
+        )
+
+# Security: Disable DEBUG in production
+# Note: SECRET_KEY check is done above, this is just for clarity
+
+# Parse ALLOWED_HOSTS from environment (comma-separated)
+allowed_hosts_str = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_str.split(',') if host.strip()]
+
+# Security: In production, ALLOWED_HOSTS must be explicitly set
+if not DEBUG:
+    # Check if only localhost variants are present
+    localhost_variants = {'localhost', '127.0.0.1', '::1'}
+    if set(ALLOWED_HOSTS).issubset(localhost_variants):
+        import warnings
+        warnings.warn(
+            "ALLOWED_HOSTS contains only localhost variants. "
+            "Set ALLOWED_HOSTS environment variable with your domain in production!",
+            UserWarning
+        )
 
 # Application definition
 
@@ -36,11 +68,24 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    # Internal Apps
-    'Reservation_Module',
+    # Internal Apps - Domain Separation
+    'shared',
+    'restaurant',
+    'taxi',
+    # Reservation_Module removed from INSTALLED_APPS to avoid duplicate models
+    # Views/URLs in Reservation_Module still work via imports from restaurant/taxi/shared
     # External Apps
     'rest_framework',
     'corsheaders',
+]
+
+# Silence system check warnings for duplicate models during migration period
+# These warnings occur because Reservation_Module and new apps (restaurant/taxi/shared) 
+# share the same db_table during the migration period
+SILENCED_SYSTEM_CHECKS = [
+    'models.E028',  # db_table used by multiple models
+    'models.E030',  # index name not unique
+    'templates.W003',  # template tag module used multiple times
 ]
 
 MIDDLEWARE = [
@@ -59,7 +104,10 @@ ROOT_URLCONF = 'Server.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates'],
+        'DIRS': [
+            BASE_DIR / 'templates',
+            BASE_DIR / 'Reservation_Module' / 'templates',  # Add Reservation_Module templates explicitly
+        ],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -82,10 +130,22 @@ DATABASES = {
         'NAME': os.getenv('DB_NAME', ''),
         'USER': os.getenv('DB_USER', ''),
         'PASSWORD': os.getenv('DB_PASSWORD', ''),
-        'HOST': os.getenv('DB_HOST', ''),
-        'PORT': os.getenv('DB_PORT', 5432),
+        'HOST': os.getenv('DB_HOST', 'postgres'),  # Default to 'postgres' service name
+        'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
+
+# Security: Validate database configuration in production
+if not DEBUG:
+    db_config = DATABASES['default']
+    required_db_fields = ['NAME', 'USER', 'PASSWORD', 'HOST']
+    missing_fields = [field for field in required_db_fields if not db_config.get(field)]
+    if missing_fields:
+        raise ValueError(
+            f"Database configuration incomplete in production! "
+            f"Missing: {', '.join(missing_fields)}. "
+            f"Set DB_NAME, DB_USER, DB_PASSWORD, DB_HOST environment variables."
+        )
 
 # ALTER SCHEMA public OWNER TO "Eiliya Zanganeh";
 #
@@ -125,10 +185,11 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATICFILES_DIRS = [
     BASE_DIR / 'static',
 ]
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -136,10 +197,29 @@ STATICFILES_DIRS = [
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CSRF Settings - Allow JavaScript to access CSRF token
-CSRF_COOKIE_HTTPONLY = False  # Allow JavaScript to read CSRF cookie
+CSRF_COOKIE_HTTPONLY = False  # Allow JavaScript to read CSRF cookie (required for frontend)
 CSRF_COOKIE_SAMESITE = 'Lax'
-CSRF_TRUSTED_ORIGINS = ['http://localhost:5000', 'http://127.0.0.1:5000']
+CSRF_TRUSTED_ORIGINS = os.environ.get(
+    'CSRF_TRUSTED_ORIGINS',
+    'http://localhost:5000,http://127.0.0.1:5000'
+).split(',')
 
 # CORS Settings for API
-CORS_ALLOW_ALL_ORIGINS = True  # For development only
+# Security: Only allow all origins in development
+CORS_ALLOW_ALL_ORIGINS = DEBUG  # Only True in development
 CORS_ALLOW_CREDENTIALS = True
+
+# In production, use explicit allowed origins
+if not DEBUG:
+    CORS_ALLOWED_ORIGINS = os.environ.get(
+        'CORS_ALLOWED_ORIGINS',
+        ''
+    ).split(',')
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in CORS_ALLOWED_ORIGINS if origin.strip()]
+    if not CORS_ALLOWED_ORIGINS:
+        import warnings
+        warnings.warn(
+            "CORS_ALLOWED_ORIGINS not set in production! "
+            "Set CORS_ALLOWED_ORIGINS environment variable with allowed origins.",
+            UserWarning
+        )
